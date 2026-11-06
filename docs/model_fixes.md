@@ -11561,3 +11561,29 @@ the same excess series, the identical-series pivot p = 1, and the pivot recentri
 Real-data outputs are `stats.json`, `benchmarks.json`, `REPORT.md`,
 `runs_manifest.csv` and `MANIFEST_NOTES.md` under
 `/workspaces/thesis/scratch/final/out/phase1/`.
+
+## F2-1 — the monthly Faber filter (2026-11-06)
+
+**Status**: Phase 2 sensitivity, authorised by Reviewers B and C. `filter_frequency` is
+`daily` (default) or `monthly`; `filter_series` stays `tr`. The daily path is unchanged. The
+monthly rule reads only completed month-end sessions from the total-return index: the latest
+month-end `m <= D` against the simple mean of the last 10 month-end total-return levels ending
+at `m`. A month still in progress is never used; fewer than 10 month-ends is `not_evaluable`
+and the filter stays off, as in the daily rule. The state is recorded per decision date in
+`trend_filter_dates`.
+
+**Measured**: on the 61 FINAL decision dates the daily-TR and monthly-TR states differ on
+**8** dates; the C1 grid differs on **3 of 58**. The monthly-price vs daily-price check also
+gives **8 of 61**, confirming Reviewer A's preliminary count. FINAL's concatenated R is
+**45.27%** daily vs **41.16%** monthly (delta **-4.11 pp**); C1 is **34.71%** vs **29.33%**
+(delta **-5.38 pp**). B0 is **42.69%** vs **39.29%** concatenated and **33.63%** vs **27.79%**
+on C1. The paired Newey-West tests of monthly minus daily are not significant at lag 10
+(FINAL concatenated -0.55 pp/yr, p 0.624; C1 -0.82, p 0.202; B0 concatenated -0.45, p 0.688;
+B0 C1 -0.90, p 0.178). These are sensitivity results on windows already seen, not an
+out-of-sample validation; neither rule is selected and the reference configuration is
+unchanged.
+
+**Verification**: `tests/test_backtest_v2.py` (daily/monthly disagreement, in-progress month,
+fewer than ten month-ends, default daily unchanged); `R9-B5-P1-DAILY` reproduces
+`R1-B5-P1` with max absolute daily-return difference **0.0**; the 15 R9 rows are in
+`runs_manifest.csv` with their `config_sha256`.

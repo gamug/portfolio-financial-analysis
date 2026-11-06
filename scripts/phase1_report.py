@@ -1,4 +1,4 @@
-"""Assemble the Phase 1 REPORT.md from the collected JSONs (plan §4, sections 1-13).
+"""Assemble the Phase 1 REPORT.md from the collected JSONs (plan §4, sections 1-14).
 
     uv run python scripts/phase1_report.py --out DIR
 
@@ -29,6 +29,8 @@ from phase1_stats import (
     metrics,
     stationary_mdd_diff,
 )
+
+from cycle.backtest import core as backtest_core
 
 OLD = Path("/workspaces/thesis/scratch/final/out/final_round/runs")
 MDD_THRESHOLD = 0.0831
@@ -138,6 +140,11 @@ def _hac_diff(a: dict[str, float], b: dict[str, float]) -> dict[str, float]:
     se = (var / n) ** 0.5
     p = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(abs(mean / se) / math.sqrt(2.0)))) if se > 0 else 1.0
     return {"mean_annual_pp": mean * 252 * 100.0, "t": mean / se if se > 0 else 0.0, "p": p, "n": n}
+
+
+def _trend_state(close: dict[str, float], day: str, frequency: str) -> str:
+    trigger = backtest_core.trend_trigger(close, day, frequency=frequency)
+    return "not_evaluable" if trigger is None else ("cash" if trigger else "invested")
 
 
 def _load_stats(out: Path) -> dict[str, Any]:
@@ -1761,6 +1768,258 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
     )
     lines.append(_table(["series", "R concat (20 bp)", "mean MDD"], r3_rows))
     lines.append("")
+    # 14. F2-1 monthly Faber filter
+    lines.append("## 14. F2-1 — monthly Faber filter (sensitivity)\n")
+    r9_ids = [
+        *(f"R9-B5-{window}" for window in (*WINDOWS, "C1")),
+        *(f"R9-B0-{window}" for window in (*WINDOWS, "C1")),
+        "R9-B5-P1-DAILY",
+    ]
+    if not all((out / "runs" / f"{run_id}.json").is_file() for run_id in r9_ids):
+        lines.append(
+            "The F2-1 block R9 has not been collected; no monthly-filter number is reported.\n"
+        )
+    else:
+        lines.append(
+            "**Label.** This is a sensitivity on windows already seen; it is **not** an "
+            "out-of-sample validation. The monthly rule is not selected or preferred over the "
+            "daily rule, and the reference configuration is unchanged (FINAL = B5, B0). Only "
+            "the filter's reading frequency changes; every other Phase-1 parameter is the same.\n"
+        )
+        control = load_run(out, "R9-B5-P1-DAILY")["daily"]["TOPN_MV_GUARD_NO_NLP"]
+        baseline = load_run(out, "R1-B5-P1")["daily"]["TOPN_MV_GUARD_NO_NLP"]
+        control_days = sorted(set(control) & set(baseline))
+        max_abs = max(abs(float(control[day]) - float(baseline[day])) for day in control_days)
+        if max_abs != 0.0:
+            raise SystemExit(f"F2-1 control failed: R9-B5-P1-DAILY vs R1-B5-P1 max abs {max_abs}")
+        lines.append(
+            f"**Daily control.** `R9-B5-P1-DAILY` reproduces `R1-B5-P1` on {len(control_days)} "
+            f"sessions with max absolute difference **{max_abs:.1f}**.\n"
+        )
+
+        daily_payloads = {
+            **{window: load_run(out, f"R1-B5-{window}") for window in WINDOWS},
+            "C1": load_run(out, "R8-FINAL-C1"),
+        }
+        monthly_payloads = {
+            **{window: load_run(out, f"R9-B5-{window}") for window in WINDOWS},
+            "C1": load_run(out, "R9-B5-C1"),
+        }
+        daily_states = {
+            object_name: {
+                row["date"]: row["state"] for row in payload["params"]["trend_filter_dates"]
+            }
+            for object_name, payload in daily_payloads.items()
+        }
+        monthly_states = {
+            object_name: {
+                row["date"]: row["state"] for row in payload["params"]["trend_filter_dates"]
+            }
+            for object_name, payload in monthly_payloads.items()
+        }
+        spy_series = backtest_core.load_core_series(SPY_FILE)
+        price = dict(spy_series.close)
+        final_dates = sorted({day for window in WINDOWS for day in daily_states[window]})
+        c1_dates = sorted(daily_states["C1"])
+        price_daily = {day: _trend_state(price, day, "daily") for day in final_dates + c1_dates}
+        price_monthly = {day: _trend_state(price, day, "monthly") for day in final_dates + c1_dates}
+        daily_final = {
+            day: daily_states[window][day] for window in WINDOWS for day in daily_states[window]
+        }
+        monthly_final = {
+            day: monthly_states[window][day] for window in WINDOWS for day in monthly_states[window]
+        }
+        state_rows = []
+        for object_name, dates, daily_map, monthly_map in (
+            ("FINAL", final_dates, daily_final, monthly_final),
+            ("C1", c1_dates, daily_states["C1"], monthly_states["C1"]),
+        ):
+            for day in dates:
+                if daily_map[day] == monthly_map[day] and (price_daily[day] == price_monthly[day]):
+                    continue
+                state_rows.append(
+                    [
+                        object_name,
+                        day,
+                        daily_map[day],
+                        monthly_map[day],
+                        price_daily[day],
+                        price_monthly[day],
+                    ]
+                )
+        final_dm = sum(daily_final[day] != monthly_final[day] for day in final_dates)
+        c1_dm = sum(daily_states["C1"][day] != monthly_states["C1"][day] for day in c1_dates)
+        final_pm = sum(price_daily[day] != price_monthly[day] for day in final_dates)
+        c1_pm = sum(price_daily[day] != price_monthly[day] for day in c1_dates)
+        lines.append(
+            f"**Decision-date states.** Daily-TR and monthly-TR differ on **{final_dm} of "
+            f"{len(final_dates)}** FINAL dates and **{c1_dm} of {len(c1_dates)}** C1 dates. "
+            f"The monthly-price vs daily-price check gives **{final_pm} of {len(final_dates)}** "
+            f"and **{c1_pm} of {len(c1_dates)}**; Reviewer A's 8 of 61 is confirmed for that "
+            "price comparison. The table is the union of the two comparisons, with both states.\n"
+        )
+        lines.append(
+            _table(
+                [
+                    "object",
+                    "date",
+                    "daily TR",
+                    "monthly TR",
+                    "daily price",
+                    "monthly price",
+                ],
+                state_rows,
+            )
+        )
+        lines.append("")
+
+        configs = {
+            "FINAL": ("TOPN_MV_GUARD_NO_NLP", "R1-B5", "R9-B5", "R8-FINAL-C1", "R9-B5-C1"),
+            "B0": ("TOPN_MV_GUARD_NO_NLP", "R1-B0", "R9-B0", "R8-B0-C1", "R9-B0-C1"),
+        }
+        perf: dict[
+            str,
+            dict[
+                str, tuple[dict[str, float], dict[str, float], dict[str, float], dict[str, float]]
+            ],
+        ] = {}
+        for config, (arm, daily_run, monthly_run, daily_c1, monthly_c1) in configs.items():
+            daily_parts = [load_run(out, f"{daily_run}-{window}") for window in WINDOWS]
+            monthly_parts = [load_run(out, f"{monthly_run}-{window}") for window in WINDOWS]
+            daily_all = concatenate([arm_daily(payload, arm) for payload in daily_parts])
+            monthly_all = concatenate([arm_daily(payload, arm) for payload in monthly_parts])
+            daily_rf = concatenate([payload["rf"] for payload in daily_parts])
+            monthly_rf = concatenate([payload["rf"] for payload in monthly_parts])
+            daily_c1_payload = load_run(out, daily_c1)
+            monthly_c1_payload = load_run(out, monthly_c1)
+            perf[config] = {}
+            for object_name in (*WINDOWS, "concatenated", "C1"):
+                if object_name == "concatenated":
+                    daily_values = daily_all
+                    monthly_values = monthly_all
+                    daily_rf_series = daily_rf
+                    monthly_rf_series = monthly_rf
+                elif object_name == "C1":
+                    daily_values = arm_daily(daily_c1_payload, arm)
+                    monthly_values = arm_daily(monthly_c1_payload, arm)
+                    daily_rf_series = daily_c1_payload["rf"]
+                    monthly_rf_series = monthly_c1_payload["rf"]
+                else:
+                    d_payload = daily_parts[WINDOWS.index(object_name)]
+                    m_payload = monthly_parts[WINDOWS.index(object_name)]
+                    daily_values = arm_daily(d_payload, arm)
+                    monthly_values = arm_daily(m_payload, arm)
+                    daily_rf_series = d_payload["rf"]
+                    monthly_rf_series = m_payload["rf"]
+                perf[config][object_name] = (
+                    daily_values,
+                    monthly_values,
+                    metrics(daily_values, daily_rf_series),
+                    metrics(monthly_values, monthly_rf_series),
+                )
+
+        rows_r_mdd = []
+        rows_sharpe = []
+        for config in ("FINAL", "B0"):
+            for object_name in (*WINDOWS, "concatenated", "C1"):
+                _, _, daily_m, monthly_m = perf[config][object_name]
+                rows_r_mdd.append(
+                    [
+                        config,
+                        object_name,
+                        _pct(daily_m["cumulative_return"]),
+                        _pct(monthly_m["cumulative_return"]),
+                        _pct(monthly_m["cumulative_return"] - daily_m["cumulative_return"]),
+                        _pct(daily_m["cagr"]),
+                        _pct(monthly_m["cagr"]),
+                        _pct(monthly_m["cagr"] - daily_m["cagr"]),
+                        _num(daily_m["max_drawdown"]),
+                        _num(monthly_m["max_drawdown"]),
+                        _num(monthly_m["max_drawdown"] - daily_m["max_drawdown"]),
+                    ]
+                )
+                rows_sharpe.append(
+                    [
+                        config,
+                        object_name,
+                        _num(daily_m["sharpe"]),
+                        _num(monthly_m["sharpe"]),
+                        _num(monthly_m["sharpe"] - daily_m["sharpe"]),
+                        _pct(daily_m["cvar95"]),
+                        _pct(monthly_m["cvar95"]),
+                        _pct(monthly_m["cvar95"] - daily_m["cvar95"]),
+                    ]
+                )
+        lines.append(
+            "Per-window and concatenated/C1 performance, daily-TR rule vs monthly-TR rule "
+            "(difference = monthly minus daily):"
+        )
+        lines.append(
+            _table(
+                [
+                    "config",
+                    "object",
+                    "daily R",
+                    "monthly R",
+                    "delta R",
+                    "daily CAGR",
+                    "monthly CAGR",
+                    "delta CAGR",
+                    "daily MDD",
+                    "monthly MDD",
+                    "delta MDD",
+                ],
+                rows_r_mdd,
+            )
+        )
+        lines.append("")
+        lines.append(
+            _table(
+                [
+                    "config",
+                    "object",
+                    "daily Sharpe",
+                    "monthly Sharpe",
+                    "delta Sharpe",
+                    "daily CVaR95",
+                    "monthly CVaR95",
+                    "delta CVaR95",
+                ],
+                rows_sharpe,
+            )
+        )
+        lines.append("")
+
+        hac_rows = []
+        lags = (10, 5, 21)
+        for config in ("FINAL", "B0"):
+            for object_name in ("concatenated", "C1"):
+                daily_values, monthly_values, _, _ = perf[config][object_name]
+                for lag in lags:
+                    item = hac_mean_diff(monthly_values, daily_values, lag=lag)
+                    hac_rows.append(
+                        [
+                            config,
+                            object_name,
+                            str(lag),
+                            f"{item['mean_annual_pp']:+.2f}",
+                            f"{item['t']:.2f}",
+                            f"{item['p_value']:.3f}",
+                            str(int(item["n"])),
+                        ]
+                    )
+        lines.append(
+            "Paired Newey-West (Bartlett) tests of the daily net-return difference **monthly "
+            "minus daily**, lag 10 (5 and 21 as sensitivity):"
+        )
+        lines.append(
+            _table(
+                ["config", "object", "lag", "mean pp/yr", "t", "p (two-sided)", "n"],
+                hac_rows,
+            )
+        )
+        lines.append("")
+
     # Appendix A. old vs new p-values, traceable.
     lines.append("## Appendix A. MDD bootstrap, old vs new p-values\n")
     appendix_rows = []

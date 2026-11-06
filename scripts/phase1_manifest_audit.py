@@ -51,7 +51,16 @@ def _config_sha256(payload: dict[str, Any]) -> str:
 
 
 def _notes(rows: list[dict[str, str]], retained: list[str]) -> str:
-    return f"""# Phase-1 run manifest — field notes
+    recorded = [float(row["seconds"]) for row in rows if row["seconds"] not in ("not recorded", "")]
+    phase1 = [row for row in rows if row["block"] != "R9"]
+    f2 = [row for row in rows if row["block"] == "R9"]
+    phase1_seconds = sum(
+        float(row["seconds"]) for row in phase1 if row["seconds"] not in ("not recorded", "")
+    )
+    f2_seconds = sum(
+        float(row["seconds"]) for row in f2 if row["seconds"] not in ("not recorded", "")
+    )
+    return f"""# Phase-1/F2-1 run manifest — field notes
 
 The canonical CSV is `runs_manifest.csv`; this note is generated with it by
 `scripts/phase1_manifest_audit.py`.  The audit reads the existing collector output and never
@@ -64,31 +73,34 @@ re-runs a backtest.
   run's configuration.
 - `config_sha256`: sha256 of that run's effective `params` object in
   `runs/<run_id>.json`, canonical JSON (`sort_keys=True`, `separators=(",", ":")`).  This is
-  the per-run configuration hash.
+  the per-run configuration hash; it includes `filter_frequency` for the F2-1 rows.
 - `seconds`: the engine subprocess's wall-clock duration measured by
   `phase1_run.run_one` (start immediately before the backtest subprocess, stop immediately
   after it).  It excludes the reflink template copy, the JSON collection step, and queue
-  wait between jobs.  Eight rows were written by a killed block whose writer never flushed
-  its log/index (`R2-X2-H3`, `R2-X3-H1`, `R2-X3-H2`, `R2-X3-H3`, `R2-X3-P1`,
+  wait between jobs.  Eight Phase-1 rows were written by a killed block whose writer never
+  flushed its log/index (`R2-X2-H3`, `R2-X3-H1`, `R2-X3-H2`, `R2-X3-H3`, `R2-X3-P1`,
   `R2-X3-P2`, `R2-X3-P3`, `R2-X4-P1`); their JSON mtimes are the resumed collector's write
   times (one is earlier than `created_at`), so no duration is recoverable and `seconds` is
-  `not recorded`.  The same eight have `log = not recorded`.
+  `not recorded`.  The same eight have `log = not recorded`.  Every F2-1 row has a recorded
+  duration and log.
 - `db_retained`: true only when the row's DB exists in `dbs/`.  {len(retained)} files are
-  present ({", ".join(retained)}).  The earlier L1/L2 rows point at deleted copies and are
-  false.  The task text said "7 files"; `dbs/` now holds 8 because the previous fix round
-  retained `R1-B0-P2.db` for its re-collected row.  `db_retained` follows the files on disk.
+  present: the eight Phase-1 files (including `R1-B0-P2.db` from the earlier fix round) and
+  the seven F2-1 B5 monthly files.  The B0 monthly and daily-control copies were deleted
+  after collection.  The earlier L1/L2 rows point at deleted copies and are false.
 - `exit`: 0 for every row.
 
 ## Run-time overrun against the 8 h estimate
 
-The plan's pre-run estimate was 8 h.  The measured engine time is **33.2 h** across the
-327 runs; with the collectors' concurrency the wall clock ran from the first
-`created_at` (2026-11-06T04:50:10Z) to the last (2026-11-06T17:42:11Z), **12 h 52 min**.
-The 8 h boundary was crossed at about 12:50Z while the R2 block and the later R8 C1
-continuation were still running.  The overrun is the actual compute volume, not a single
-incident: R2 alone records 15.8 h over 142 runs, and R8 C1 adds 0.63 h after 16:10Z.
-`PROGRESS.md` records the contention diagnosis (one fresh copy per run; reflink copies at
-one worker after the contention).  No run was shortened or skipped to fit the estimate.
+Phase 1's 327 runs recorded **{phase1_seconds / 3600:.1f} h** of engine time and ran
+2026-11-06T04:50:10Z to 17:42:11Z (**12 h 52 min** wall clock), over the plan's 8 h estimate.
+The boundary was crossed at about 12:50Z while the R2 block and the later R8 C1 continuation
+were still running.  The overrun is the actual compute volume, not a single incident: R2
+alone records 15.8 h over 142 runs, and R8 C1 adds 0.63 h after 16:10Z.  `PROGRESS.md`
+records the contention diagnosis.
+
+F2-1's 15 runs recorded **{f2_seconds / 3600:.2f} h** of engine time and took **34 min 19 s**
+wall clock with one worker, below its 1 h 51 min preflight estimate.  All 342 rows now in
+this manifest sum to **{sum(recorded) / 3600:.1f} h** of recorded engine time.
 
 ## Counts
 
