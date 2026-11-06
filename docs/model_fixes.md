@@ -11587,3 +11587,30 @@ unchanged.
 fewer than ten month-ends, default daily unchanged); `R9-B5-P1-DAILY` reproduces
 `R1-B5-P1` with max absolute daily-return difference **0.0**; the 15 R9 rows are in
 `runs_manifest.csv` with their `config_sha256`.
+
+## F2-2 — MARKOWITZ_SAMPLE covariance-regularisation control (2026-11-06)
+
+**Status**: Phase 2 control, approved by Reviewers B and C. MARKOWITZ_BASE with one change:
+`cov_estimator = "sample"` instead of `ledoit_wolf_cc`; same PIT universe, min-variance,
+long-only, 5% name cap, 30% sector cap, costs and exit rules. The frozen params file is not
+edited: the driver/CLI `--cov-estimator` override is optional, defaults to the params file,
+and is recorded in `params_json` (so `config_sha256` identifies it). The control does not enter
+the 30-configuration family; DSR, PBO, White RC and walk-forward are unchanged.
+
+**Numerical traceability**: every decision records the number of assets in the stored sample
+covariance, its condition number, the solver and status, and whether a solver fallback, cap or
+turnover relaxation, or covariance substitution occurred. On the 7 R10 windows (119
+decisions) the asset count is 495-499, the condition number 85,364-321,324, every status is
+`optimal`, and there are **0** fallbacks, relaxations or substitutions. No hard stop.
+
+**Measured**: MARKOWITZ_BASE 53.16% vs MARKOWITZ_SAMPLE 52.60% concatenated (-0.56 pp) and
+52.67% vs 54.41% on C1 (+1.74 pp); Sharpe 0.517 vs 0.505 and 0.508 vs 0.524; MDD 0.156 vs
+0.159 and 0.153 vs 0.155. The GUARD twin is 44.11% vs 41.37% concatenated and 39.87% vs
+38.83% on C1. Paired HAC (lag 10) of FINAL - sample is -1.22 pp/yr (p 0.710) concatenated and
+-3.10 (p 0.342) on C1; MARKOWITZ_BASE - sample is +0.06 (p 0.914) and -0.25 (p 0.668). This is
+a descriptive control, not a candidate.
+
+**Verification**: the default `ledoit_wolf_cc` control run reproduces `R1-B0-P1`'s
+MARKOWITZ_BASE daily series with max absolute difference **0.0**; the default path is asserted
+in `tests/test_backtest_driver.py`; the R10 rows are in `runs_manifest.csv` with
+`control = True` and `config_sha256`.

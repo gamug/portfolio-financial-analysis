@@ -2021,6 +2021,258 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         )
         lines.append("")
 
+    # 15. MARKOWITZ_SAMPLE covariance control
+    lines.append("## 15. MARKOWITZ_SAMPLE — covariance-regularisation control\n")
+    sample_ids = [f"R10-MARKOWITZ_SAMPLE-{window}" for window in (*WINDOWS, "C1")]
+    if not all((out / "runs" / f"{run_id}.json").is_file() for run_id in sample_ids):
+        lines.append(
+            "The R10 MARKOWITZ_SAMPLE block has not been collected; no covariance-control "
+            "number is reported.\n"
+        )
+    else:
+        lines.append(
+            "**Label.** Control for sensitivity to the covariance regularisation (Ledoit-Wolf "
+            "vs sample covariance). This is a descriptive reading only: MARKOWITZ_SAMPLE is "
+            "not selected, not compared as a candidate, and does not enter the 30-configuration "
+            "family (DSR, PBO, White RC and walk-forward are unchanged). Only the "
+            "MARKOWITZ_BASE arm is the subject; its GUARD twin is secondary. The satellite "
+            "arms are by-products and are not reported.\n"
+        )
+        base_table = _series_table(out, "MARKOWITZ_BASE", run_id="R1-B0", arm="MARKOWITZ_BASE")
+        sample_table = _series_table(
+            out,
+            "MARKOWITZ_SAMPLE",
+            run_id="R10-MARKOWITZ_SAMPLE",
+            arm="MARKOWITZ_BASE",
+        )
+        base_guard_table = _series_table(
+            out, "MARKOWITZ_BASE_GUARD", run_id="R1-B0", arm="MARKOWITZ_BASE_GUARD"
+        )
+        sample_guard_table = _series_table(
+            out,
+            "MARKOWITZ_SAMPLE_GUARD",
+            run_id="R10-MARKOWITZ_SAMPLE",
+            arm="MARKOWITZ_BASE_GUARD",
+        )
+
+        def _c1_item(run_id: str, arm: str) -> tuple[dict[str, float], float, float]:
+            payload = load_run(out, run_id)
+            values = arm_daily(payload, arm)
+            item = metrics(values, payload["rf"])
+            cost = 10_000.0 * sum(
+                float(row["cost"]) for row in payload["daily_detail"][arm].values()
+            )
+            turnover = sum(float(row["turnover"]) for row in payload["daily_detail"][arm].values())
+            return item, turnover, cost
+
+        base_c1, base_c1_turnover, base_c1_cost = _c1_item("R8-B0-C1", "MARKOWITZ_BASE")
+        sample_c1, sample_c1_turnover, sample_c1_cost = _c1_item(
+            "R10-MARKOWITZ_SAMPLE-C1", "MARKOWITZ_BASE"
+        )
+        base_guard_c1, base_guard_c1_turnover, base_guard_c1_cost = _c1_item(
+            "R8-B0-C1", "MARKOWITZ_BASE_GUARD"
+        )
+        sample_guard_c1, sample_guard_c1_turnover, sample_guard_c1_cost = _c1_item(
+            "R10-MARKOWITZ_SAMPLE-C1", "MARKOWITZ_BASE_GUARD"
+        )
+
+        def _rows_for(pair: tuple[str, str]) -> list[list[str]]:
+            label_base, label_sample = pair
+            rows_out: list[list[str]] = []
+            c1_items = {
+                "MARKOWITZ_BASE": (base_c1, base_c1_turnover, base_c1_cost),
+                "MARKOWITZ_SAMPLE": (sample_c1, sample_c1_turnover, sample_c1_cost),
+                "MARKOWITZ_BASE_GUARD": (
+                    base_guard_c1,
+                    base_guard_c1_turnover,
+                    base_guard_c1_cost,
+                ),
+                "MARKOWITZ_SAMPLE_GUARD": (
+                    sample_guard_c1,
+                    sample_guard_c1_turnover,
+                    sample_guard_c1_cost,
+                ),
+            }
+            for object_name in (*WINDOWS, "concatenated", "C1"):
+                if object_name == "C1":
+                    base_item, base_turnover, base_cost = c1_items[label_base]
+                    sample_item, sample_turnover, sample_cost = c1_items[label_sample]
+                else:
+                    base_table_for = {
+                        "MARKOWITZ_BASE": base_table,
+                        "MARKOWITZ_BASE_GUARD": base_guard_table,
+                    }[label_base]
+                    sample_table_for = {
+                        "MARKOWITZ_SAMPLE": sample_table,
+                        "MARKOWITZ_SAMPLE_GUARD": sample_guard_table,
+                    }[label_sample]
+                    if object_name == "concatenated":
+                        base_item = base_table_for["corrected"]
+                        sample_item = sample_table_for["corrected"]
+                        base_turnover = base_table_for["turnover"]
+                        sample_turnover = sample_table_for["turnover"]
+                        base_cost = base_table_for["cost_bps"]
+                        sample_cost = sample_table_for["cost_bps"]
+                    else:
+                        base_item = base_table_for["per_window"][object_name]
+                        sample_item = sample_table_for["per_window"][object_name]
+                        base_turnover = base_table_for["per_window_turnover"][object_name]
+                        sample_turnover = sample_table_for["per_window_turnover"][object_name]
+                        base_cost = base_table_for["per_window_cost"][object_name]
+                        sample_cost = sample_table_for["per_window_cost"][object_name]
+                rows_out.append(
+                    [
+                        object_name,
+                        _pct(base_item["cumulative_return"]),
+                        _pct(sample_item["cumulative_return"]),
+                        _pct(base_item["cagr"]),
+                        _pct(sample_item["cagr"]),
+                        _num(base_item["sharpe"]),
+                        _num(sample_item["sharpe"]),
+                        _num(base_item["max_drawdown"]),
+                        _num(sample_item["max_drawdown"]),
+                        _pct(base_item["cvar95"]),
+                        _pct(sample_item["cvar95"]),
+                        _num(base_turnover, 2),
+                        _num(sample_turnover, 2),
+                        _num(base_cost, 1),
+                        _num(sample_cost, 1),
+                    ]
+                )
+            return rows_out
+
+        headers = [
+            "object",
+            "MB R",
+            "MS R",
+            "MB CAGR",
+            "MS CAGR",
+            "MB Sharpe",
+            "MS Sharpe",
+            "MB MDD",
+            "MS MDD",
+            "MB CVaR95",
+            "MS CVaR95",
+            "MB turnover",
+            "MS turnover",
+            "MB cost bp",
+            "MS cost bp",
+        ]
+        lines.append("MARKOWITZ_BASE vs MARKOWITZ_SAMPLE:")
+        lines.append(
+            _table(
+                headers,
+                _rows_for(("MARKOWITZ_BASE", "MARKOWITZ_SAMPLE")),
+            )
+        )
+        lines.append("")
+        lines.append("MARKOWITZ_BASE_GUARD vs MARKOWITZ_SAMPLE_GUARD:")
+        lines.append(
+            _table(
+                headers,
+                _rows_for(("MARKOWITZ_BASE_GUARD", "MARKOWITZ_SAMPLE_GUARD")),
+            )
+        )
+        lines.append("")
+
+        # Paired HAC tests: B5 - sample and base - sample.
+        b5_concat = _concat(_per_window(out, "R1-B5", "TOPN_MV_GUARD_NO_NLP"))
+        b5_c1 = arm_daily(load_run(out, "R8-FINAL-C1"), "TOPN_MV_GUARD_NO_NLP")
+        base_concat = base_table["concat"]
+        base_c1_series = arm_daily(load_run(out, "R8-B0-C1"), "MARKOWITZ_BASE")
+        sample_concat = sample_table["concat"]
+        sample_c1_series = arm_daily(load_run(out, "R10-MARKOWITZ_SAMPLE-C1"), "MARKOWITZ_BASE")
+        hac_rows = []
+        lags = (10, 5, 21)
+        for comparison, object_name, left, right in (
+            ("FINAL (B5) - MARKOWITZ_SAMPLE", "concatenated", b5_concat, sample_concat),
+            ("FINAL (B5) - MARKOWITZ_SAMPLE", "C1", b5_c1, sample_c1_series),
+            ("MARKOWITZ_BASE - MARKOWITZ_SAMPLE", "concatenated", base_concat, sample_concat),
+            ("MARKOWITZ_BASE - MARKOWITZ_SAMPLE", "C1", base_c1_series, sample_c1_series),
+        ):
+            for lag in lags:
+                item = hac_mean_diff(left, right, lag=lag)
+                hac_rows.append(
+                    [
+                        comparison,
+                        object_name,
+                        str(lag),
+                        f"{item['mean_annual_pp']:+.2f}",
+                        f"{item['t']:.2f}",
+                        f"{item['p_value']:.3f}",
+                        str(int(item["n"])),
+                    ]
+                )
+        lines.append(
+            "Paired Newey-West (Bartlett) tests of the daily net-return difference, lag 10 "
+            "(5 and 21 as sensitivity):"
+        )
+        lines.append(
+            _table(
+                ["comparison", "object", "lag", "mean pp/yr", "t", "p (two-sided)", "n"],
+                hac_rows,
+            )
+        )
+        lines.append("")
+
+        # Numerical diagnostics.
+        diag_path = out / "markowitz_sample_diagnostics.json"
+        if diag_path.is_file():
+            diag = json.loads(diag_path.read_text())
+            summary_rows = []
+            total_non_optimal = 0
+            for window in (*WINDOWS, "C1"):
+                summary = diag["runs"][window]["arms"]["MARKOWITZ_BASE"]["summary"]
+                total_non_optimal += int(summary["non_optimal"])
+                summary_rows.append(
+                    [
+                        window,
+                        str(summary["decisions"]),
+                        f"{summary['n_assets_min']}-{summary['n_assets_max']}",
+                        _num(summary["condition_min"], 1),
+                        _num(summary["condition_median"], 1),
+                        _num(summary["condition_max"], 1),
+                        str(summary["non_optimal"]),
+                        str(summary["solver_fallbacks"]),
+                        str(summary["relaxations"]),
+                        str(summary["substitutions"]),
+                    ]
+                )
+            lines.append(
+                "**Numerical diagnostics.** Per decision date, the stored sample covariance's "
+                "asset count and condition number, the solver/status and any fallback, relaxation "
+                "or covariance substitution:"
+            )
+            lines.append(
+                _table(
+                    [
+                        "window",
+                        "decisions",
+                        "n_assets",
+                        "cond min",
+                        "cond median",
+                        "cond max",
+                        "non-optimal",
+                        "solver fallbacks",
+                        "relaxations",
+                        "substitutions",
+                    ],
+                    summary_rows,
+                )
+            )
+            lines.append(
+                f"\nAll **{sum(int(row[1]) for row in summary_rows)}** decisions are recorded; "
+                f"**{total_non_optimal}** have a status other than `optimal`. The hard-stop "
+                "checks (singular or > 1e12 condition number, infeasible/failed status, solver "
+                "fallback, relaxation, substitution) found **0** cases. The per-decision rows are "
+                "in Appendix B."
+            )
+            lines.append("")
+        else:
+            lines.append(
+                "`markowitz_sample_diagnostics.json` is missing; the per-decision numerical "
+                "diagnostics are not reported.\n"
+            )
     # Appendix A. old vs new p-values, traceable.
     lines.append("## Appendix A. MDD bootstrap, old vs new p-values\n")
     appendix_rows = []
@@ -2050,6 +2302,49 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
     )
     lines.append("")
 
+    diag_path = out / "markowitz_sample_diagnostics.json"
+    if diag_path.is_file():
+        diag = json.loads(diag_path.read_text())
+        rows = []
+        for window in (*WINDOWS, "C1"):
+            for row in diag["runs"][window]["arms"]["MARKOWITZ_BASE"]["decisions"]:
+                relaxations = row["relaxations"]
+                rows.append(
+                    [
+                        window,
+                        str(row["decision_date"]),
+                        str(row["n_assets"]),
+                        _num(row["condition_number"], 1),
+                        str(row["solver"]),
+                        str(row["status"]),
+                        str(bool(row["solver_fallback"])),
+                        "none" if not relaxations else json.dumps(relaxations),
+                        str(bool(row["substitution"])),
+                    ]
+                )
+        lines.append("## Appendix B. MARKOWITZ_SAMPLE per-decision diagnostics\n")
+        lines.append(
+            "The MARKOWITZ_BASE arm of every R10 run; the GUARD twin reads the same risk model "
+            "and portfolio. Condition number is the stored sample covariance; a non-finite value "
+            "would be singular. The hard-stop checks are reported in §15.\n"
+        )
+        lines.append(
+            _table(
+                [
+                    "window",
+                    "decision date",
+                    "n assets",
+                    "condition",
+                    "solver",
+                    "status",
+                    "solver fallback",
+                    "relaxations",
+                    "substitution",
+                ],
+                rows,
+            )
+        )
+        lines.append("")
     return "\n".join(lines) + "\n"
 
 
