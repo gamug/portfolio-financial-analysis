@@ -62,10 +62,19 @@ def _bad(row: dict[str, Any]) -> str | None:  # noqa: PLR0911 - one reason per c
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True)
+    parser.add_argument(
+        "--windows",
+        default=",".join(WINDOWS),
+        help="comma-separated windows to check (default: all seven)",
+    )
     args = parser.parse_args(argv)
     out = Path(args.out).expanduser().resolve()
+    windows = tuple(part.strip() for part in args.windows.split(",") if part.strip())
+    unknown = sorted(set(windows) - set(WINDOWS))
+    if unknown:
+        raise SystemExit(f"unknown windows {unknown}")
     payload: dict[str, Any] = {"condition_limit": CONDITION_LIMIT, "runs": {}, "bad": []}
-    for window in WINDOWS:
+    for window in windows:
         path = out / "runs" / f"R10-MARKOWITZ_SAMPLE-{window}.json"
         if not path.is_file():
             raise SystemExit(f"missing {path}")
