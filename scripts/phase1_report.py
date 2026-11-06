@@ -1952,7 +1952,8 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
                 )
         lines.append(
             "Per-window and concatenated/C1 performance, daily-TR rule vs monthly-TR rule "
-            "(difference = monthly minus daily):"
+            "(difference = monthly minus daily; R, CAGR and CVaR95 differences are in "
+            "percentage points, Sharpe and MDD differences are decimal):"
         )
         lines.append(
             _table(
