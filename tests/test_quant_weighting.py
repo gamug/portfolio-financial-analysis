@@ -139,3 +139,25 @@ def test_the_ensemble_average_is_feasible() -> None:
     assert averaged.max() <= 0.4 + 1e-12
     with pytest.raises(ValueError):
         ensemble([np.array([0.5, 0.5]), np.array([0.2, 0.2, 0.6])])
+
+
+def test_simple_return_scenarios_change_the_min_cvar_solution() -> None:
+    """Phase 1 §1.2: the LI solution is not invariant to the scenario units.
+
+    A synthetic panel with one crash scenario: the loss of the crashing name is ``-log`` in
+    log units but only ``1 - exp(log)`` in simple units, so the LP holds less of it when fed
+    the log matrix.  The check is qualitative (a changed solution, and the direction the
+    algebra predicts), not a real-data figure.
+    """
+    rng = np.random.default_rng(11)
+    log_scenarios = np.empty((100, 2))
+    log_scenarios[:, 0] = rng.normal(0.002, 0.04, 100)
+    log_scenarios[:, 1] = rng.normal(0.0002, 0.04, 100)
+    log_scenarios[0, 0] = np.log(0.5)  # one -50% simple crash, -69% in log units
+    simple_scenarios = np.expm1(log_scenarios)
+    sigma = np.cov(log_scenarios.T)
+    log_result = min_cvar(log_scenarios, sigma, beta=0.95, constraints=_UNCAPPED)
+    simple_result = min_cvar(simple_scenarios, sigma, beta=0.95, constraints=_UNCAPPED)
+    assert np.max(np.abs(log_result.weights - simple_result.weights)) > 5e-3
+    # the log matrix overstates this crash's loss, so it holds less of the crashing name
+    assert log_result.weights[0] < simple_result.weights[0]

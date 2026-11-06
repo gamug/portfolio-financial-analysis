@@ -40,6 +40,7 @@ from cycle import data as cycle_data
 from cycle.backtest import calibrate as guard_calibration
 from cycle.backtest import core as v2core
 from cycle.backtest import engine
+from cycle.backtest import exits as exit_module
 from cycle.backtest import export as export_module
 from cycle.config import CycleSettings
 from cycle.guard import GuardParams, NewsCounts, NewsParams, basing
@@ -57,6 +58,10 @@ WINDOWS: dict[str, tuple[str, str]] = {
     "H1": ("2022-10-13", "2023-10-26"),
     "H2": ("2024-08-05", "2025-02-18"),
     "H3": ("2025-09-24", "2026-10-15"),
+    # Phase 1 §1.4: one continuous window, one formation and one E_k = D1 + 21k grid from
+    # 2022-01-03 to 2026-10-15.  It is local to this table: schedule, warm-up, PIT panel and
+    # exit policy are the same code paths as P1/H3.
+    "C1": ("2022-01-03", "2026-10-15"),
 }
 
 #: D1's spacing: one execution every 21 NYSE sessions from the window's first session.
@@ -764,6 +769,8 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
     core_source: str = "spy",
     filter_exit: float = 1.0,
     satellite_weighting: str = "minvar",
+    cvar_scenarios: str = "simple",
+    pool_mode: str = "cycle",
 ) -> PipelineResult:
     targets: dict[str, dict[str, dict[int, float]]] = {BASE_ARM: {}, NOGUARD_ARM: {}}
     rebalances: list[dict[str, Any]] = []
@@ -838,18 +845,19 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
         if status != "completed":
             raise BacktestError(f"cycle_run {cycle_run_id} at {decision} is {status}")
         selected = _selected_ids(conn, cycle_run_id)
-        if len(selected) != pool_m:
-            raise BacktestError(
-                f"cycle_run {cycle_run_id} at {decision} selected {len(selected)} names, "
-                f"expected the pool's {pool_m}"
-            )
         model_assets = queries.risk_model_asset_ids(conn, model_id)
-        outside = selected - model_assets
-        if outside:
-            raise BacktestError(
-                f"cycle_run {cycle_run_id} selected {len(outside)} names outside risk model "
-                f"{model_id}: {sorted(outside)}"
-            )
+        if pool_mode == "cycle":
+            if len(selected) != pool_m:
+                raise BacktestError(
+                    f"cycle_run {cycle_run_id} at {decision} selected {len(selected)} names, "
+                    f"expected the pool's {pool_m}"
+                )
+            outside = selected - model_assets
+            if outside:
+                raise BacktestError(
+                    f"cycle_run {cycle_run_id} selected {len(outside)} names outside risk model "
+                    f"{model_id}: {sorted(outside)}"
+                )
 
         base = run_quant(
             [
@@ -866,29 +874,56 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
             db_path,
             universe_db_path,
         )
-        topn = run_quant(
-            [
-                "optimize",
-                "--analysis-date",
-                decision,
-                "--objectives",
-                "min_var",
-                "--include-hard-vetoed",
-                "--allow-missing-caps",
-                "--top-n",
-                str(params.top_n),
-                "--pool-m",
-                str(pool_m),
-                "--satellite-weighting",
-                satellite_weighting,
-                "--cycle-run-id",
-                str(cycle_run_id),
-                "--risk-model-id",
-                str(model_id),
-            ],
-            db_path,
-            universe_db_path,
-        )
+        if pool_mode == "universe":
+            # Phase 1 §1.5: MARKOWITZ_CORE_FILTER's pool is every eligible PIT member (the
+            # MARKOWITZ_BASE universe, hard-vetoed included).  The same min-variance and
+            # second-pass code path as the cycle pool sizes it.
+            topn = run_quant(
+                [
+                    "optimize",
+                    "--analysis-date",
+                    decision,
+                    "--objectives",
+                    "min_var",
+                    "--include-hard-vetoed",
+                    "--allow-missing-caps",
+                    "--top-n",
+                    str(params.top_n),
+                    "--pool-all",
+                    "--satellite-weighting",
+                    satellite_weighting,
+                    "--risk-model-id",
+                    str(model_id),
+                ],
+                db_path,
+                universe_db_path,
+            )
+        else:
+            topn = run_quant(
+                [
+                    "optimize",
+                    "--analysis-date",
+                    decision,
+                    "--objectives",
+                    "min_var",
+                    "--include-hard-vetoed",
+                    "--allow-missing-caps",
+                    "--top-n",
+                    str(params.top_n),
+                    "--pool-m",
+                    str(pool_m),
+                    "--satellite-weighting",
+                    satellite_weighting,
+                    "--cvar-scenarios",
+                    cvar_scenarios,
+                    "--cycle-run-id",
+                    str(cycle_run_id),
+                    "--risk-model-id",
+                    str(model_id),
+                ],
+                db_path,
+                universe_db_path,
+            )
         base_portfolio = _min_var_portfolio_id(base)
         topn_portfolio = _topn_portfolio_id(topn)
         if core_weight > 0.0 and core_source == "spy" and core_asset_id is None:
@@ -989,6 +1024,10 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
     guard_layers: Sequence[int] | None = None,
     vol_target: str = "fixed",
     returns_members: str = "range",
+    filter_series: str = "tr",
+    cvar_scenarios: str = "simple",
+    pool_mode: str = "cycle",
+    exit_manifest: Mapping[str, Any] | None = None,
 ) -> int:
     created = datetime.now(tz=UTC).isoformat(timespec="seconds")
     params_json = {
@@ -1007,10 +1046,14 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
         "guard_layers": None if guard_layers is None else sorted(guard_layers),
         "vol_target": vol_target,
         "returns_members": returns_members,
+        "filter_series": filter_series,
+        "cvar_scenarios": cvar_scenarios,
+        "pool_mode": pool_mode,
         "core_asset_id": core_asset_id,
         "core_series_path": None if series is None else str(series.path),
         "core_series_sha256": None if series is None else series.sha256,
         "core_manifest_declared_sha256": None if series is None else series.declared_sha256,
+        **(dict(exit_manifest or {})),
         "migrations_applied": list(migrations_applied),
         "d_start": window.d_start,
         "d_end": window.d_end,
@@ -1801,6 +1844,11 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     vol_target: str = "fixed",
     cost_bps: float | None = None,
     returns_members: str = "range",
+    filter_series: str = "tr",
+    cvar_scenarios: str = "simple",
+    pool_mode: str = "cycle",
+    exit_events_path: str | Path | None = None,
+    exit_recoveries_path: str | Path | None = None,
 ) -> dict[str, Any]:
     window = window_spec(window_id)
     database = Path(db_path).expanduser().resolve()
@@ -1811,6 +1859,32 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     if not universe.is_file():
         raise BacktestError(f"--universe-db {universe} does not exist")
     params = load_params(params_path)
+    exit_events = (
+        exit_module.load_exit_table(exit_events_path) if exit_events_path is not None else []
+    )
+    if (
+        any(event.valuation_basis == "documented_recovery" for event in exit_events)
+        and exit_recoveries_path is None
+    ):
+        raise BacktestError(
+            "the exit table has a documented_recovery row; --exit-recoveries is required"
+        )
+    recoveries = (
+        exit_module.load_private_recoveries(exit_recoveries_path)
+        if exit_recoveries_path is not None
+        else {}
+    )
+    try:
+        exit_policies = exit_module.policies_by_asset(exit_events, recoveries)
+        exit_manifest = exit_module.recovery_manifest(exit_recoveries_path, exit_events)
+    except exit_module.ExitTableError as exc:
+        raise BacktestError(str(exc)) from exc
+    if exit_events_path is not None:
+        table_path = Path(exit_events_path).expanduser().resolve()
+        exit_manifest["exit_events_path"] = str(table_path)
+        exit_manifest["exit_events_sha256"] = exit_module.sha256_file(table_path)
+        exit_manifest["exit_event_count"] = len(exit_events)
+        exit_manifest["exit_asset_count"] = len(exit_policies)
     if cost_bps is not None:
         if not math.isfinite(cost_bps) or cost_bps < 0.0:
             raise BacktestError(f"cost_bps must be a finite non-negative number, got {cost_bps!r}")
@@ -1823,6 +1897,12 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
         raise BacktestError(f"core_weight must be in [0, 1), got {core_weight!r}")
     if returns_members not in ("asof", "range"):
         raise BacktestError(f"returns_members must be 'asof' or 'range', got {returns_members!r}")
+    if filter_series not in v2core.FILTER_SERIES:
+        raise BacktestError(f"filter_series must be 'tr' or 'price', got {filter_series!r}")
+    if cvar_scenarios not in ("simple", "log"):
+        raise BacktestError(f"cvar_scenarios must be 'simple' or 'log', got {cvar_scenarios!r}")
+    if pool_mode not in ("cycle", "universe"):
+        raise BacktestError(f"pool_mode must be 'cycle' or 'universe', got {pool_mode!r}")
     if trend_filter not in v2core.FILTERS:
         raise BacktestError(
             f"unknown trend_filter {trend_filter!r}: expected one of {list(v2core.FILTERS)}"
@@ -1850,9 +1930,11 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     )
     if effective_layers is not None:
         unknown = sorted(effective_layers - {1, 3, 4})
-        if unknown or 1 not in effective_layers:
+        if unknown or not effective_layers:
+            # Phase 1 §1.6: the ablation needs layer 4 alone, so the old "must contain 1"
+            # rule is relaxed to "a non-empty subset of {1, 3, 4}".
             raise BacktestError(
-                "guard_layers must be a subset of {1, 3, 4} that contains 1, "
+                "guard_layers must be a non-empty subset of {1, 3, 4}, "
                 f"got {sorted(effective_layers)}"
             )
     if vol_target not in ("fixed", "trailing"):
@@ -1907,6 +1989,10 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
             guard_layers=None if effective_layers is None else sorted(effective_layers),
             vol_target=vol_target,
             returns_members=returns_members,
+            filter_series=filter_series,
+            cvar_scenarios=cvar_scenarios,
+            pool_mode=pool_mode,
+            exit_manifest=exit_manifest,
         )
         payload: dict[str, Any] = {}
         try:
@@ -1969,11 +2055,21 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
                 core_weight=core_weight,
                 core_asset_id=core_asset_id,
                 trend_filter=trend_filter,
-                core_close=None if series is None else series.close,
+                core_close=(
+                    None
+                    if series is None
+                    else (
+                        v2core.total_return_index(series.total_return)
+                        if filter_series == "tr"
+                        else series.close
+                    )
+                ),
                 pool_m=pool_m,
                 core_source=core_source,
                 filter_exit=filter_exit,
                 satellite_weighting=satellite_weighting,
+                cvar_scenarios=cvar_scenarios,
+                pool_mode=pool_mode,
             )
             decisions = {rebalance.decision_date for rebalance in schedule}
             tilt_triggers = [
@@ -2078,6 +2174,7 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
                 bars=bars,
                 stop_distances=stop_distances,
                 core_asset_id=core_asset_id,
+                exits=exit_policies,
             )
             simulated = engine.simulate(engine_input)
 
@@ -2248,6 +2345,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="V2_PLAN §2c: SPY close vs its 210-session mean at each decision date",
     )
     run.add_argument(
+        "--filter-series",
+        default="tr",
+        choices=list(v2core.FILTER_SERIES),
+        help="Phase 1 section 1.3: the series the 210-session signal reads -- tr (the "
+        "total-return index, Faber 2013) or price (the split-adjusted close, ladder only)",
+    )
+    run.add_argument(
         "--core-series",
         default=None,
         help="the verified SPY file (with manifest.json beside it); required when needed",
@@ -2284,6 +2388,31 @@ def build_parser() -> argparse.ArgumentParser:
         choices=SATELLITE_WEIGHTINGS,
         help="V4 plan section 2b / final round section 3: minvar (today), rp, ew, vt, maxdiv, "
         "hrp, mincvar or ensemble on the minvar-held names",
+    )
+    run.add_argument(
+        "--cvar-scenarios",
+        default="simple",
+        choices=("simple", "log"),
+        help="Phase 1 section 1.2: the min-CVaR scenario units (default simple; log only "
+        "for the correction ladder)",
+    )
+    run.add_argument(
+        "--pool-mode",
+        default="cycle",
+        choices=("cycle", "universe"),
+        help="Phase 1 section 1.5: the satellite pool -- cycle's selected candidates "
+        "(default) or every eligible PIT member (MARKOWITZ_CORE_FILTER)",
+    )
+    run.add_argument(
+        "--exit-events",
+        default=None,
+        help="Phase 1 section 1.1: the public exit-event table (docs/exit_events.json); "
+        "without it the engine keeps the pre-correction data-gap rule",
+    )
+    run.add_argument(
+        "--exit-recoveries",
+        default=None,
+        help="the private documented-recovery file (only when the table has one)",
     )
     run.add_argument(
         "--guard-layers",
@@ -2431,6 +2560,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             vol_target=args.vol_target,
             cost_bps=args.cost_bps,
             returns_members=args.returns_members,
+            filter_series=args.filter_series,
+            cvar_scenarios=args.cvar_scenarios,
+            pool_mode=args.pool_mode,
+            exit_events_path=args.exit_events,
+            exit_recoveries_path=args.exit_recoveries,
         )
     except BacktestError as exc:
         print(f"cycle.backtest: {exc}", file=sys.stderr)

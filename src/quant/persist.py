@@ -687,6 +687,8 @@ def run_optimize(  # noqa: PLR0915 - one linear orchestration, like run_build_ri
 
 TOPN_SELECTION_COUNT = 30  # BACKTEST_SPEC §0: the Top-N arms, fixed for the backtest
 TOPN_KIND = "min_var_topn"
+#: Phase 1 §1.5: the MARKOWITZ_CORE_FILTER book (the whole eligible PIT panel as the pool).
+MCF_KIND = "min_var_mcf"
 
 
 class CycleSelectionError(ValueError):
@@ -699,7 +701,7 @@ class TopnBookResult:
     portfolio_id: int
     model_id: int
     as_of: str
-    cycle_run_id: int
+    cycle_run_id: int | None
     kind: str
     n_positions: int
     status: str
@@ -802,19 +804,27 @@ def _projected_book(  # noqa: PLR0913, PLR0917 - one method's raw vector and its
     )
 
 
-def _scenario_returns(
+def _scenario_returns(  # noqa: PLR0913, PLR0917 - the panel's inputs, all named
     conn: Database,
     settings: QuantSettings,
     manifest: QuantManifest,
     as_of: str,
     asset_ids: list[int],
+    scenarios: str = "simple",
 ) -> np.ndarray:
     """The risk model's own 756-session return window, restricted to *asset_ids*.
 
     ``build_return_panel`` is the builder the risk model itself used: the same calendar,
     coverage gate, one-day-gap fill and residual zero-fill. Every id is already in the
     model's panel, so restricting to them keeps every column.
+
+    ``scenarios`` selects the units the min-CVaR LP reads (Phase 1 §1.2): ``simple`` converts
+    the stored log total returns with ``expm1`` because Rockafellar & Uryasev's loss is linear
+    in simple returns; ``log`` keeps the stored series for the correction ladder only.
+    Covariance estimation never reads this panel.
     """
+    if scenarios not in ("simple", "log"):
+        raise CycleSelectionError(f"cvar_scenarios must be 'simple' or 'log', got {scenarios!r}")
     panel = build_return_panel(
         conn,
         as_of=as_of,
@@ -829,17 +839,19 @@ def _scenario_returns(
             "the CVaR scenario panel lost a name the risk model holds: "
             f"{sorted(set(asset_ids) - set(panel.asset_ids))}"
         )
-    return panel.returns
+    return np.expm1(panel.returns) if scenarios == "simple" else panel.returns
 
 
 def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orchestration
     settings: QuantSettings,
     *,
     as_of: str,
-    cycle_run_id: int,
+    cycle_run_id: int | None,
     risk_model_id: int,
     pool_size: int = TOPN_SELECTION_COUNT,
     satellite_weighting: str = "minvar",
+    cvar_scenarios: str = "simple",
+    universe_pool: bool = False,
     conn: Database | None = None,
 ) -> TopnBookResult:
     """Min-variance over the 30 names a cycle run selected, on a stored risk model's covariance.
@@ -864,6 +876,12 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
         raise CycleSelectionError(
             f"pool_size must be an integer >= {TOPN_SELECTION_COUNT}, got {pool_size!r}"
         )
+    if universe_pool and cycle_run_id is not None:
+        raise CycleSelectionError(
+            "the MARKOWITZ_CORE_FILTER pool is every eligible PIT member: drop --cycle-run-id"
+        )
+    if not universe_pool and cycle_run_id is None:
+        raise CycleSelectionError("the cycle-pool book needs --cycle-run-id")
     if satellite_weighting not in (
         "minvar",
         "rp",
@@ -877,6 +895,10 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
         raise CycleSelectionError(
             f"satellite_weighting must be minvar, rp, ew, vt, maxdiv, hrp, mincvar or "
             f"ensemble, got {satellite_weighting!r}"
+        )
+    if cvar_scenarios not in ("simple", "log"):
+        raise CycleSelectionError(
+            f"cvar_scenarios must be 'simple' or 'log', got {cvar_scenarios!r}"
         )
     owns = conn is None
     conn = conn or connect(settings.db_path)
@@ -899,14 +921,19 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
                 "rebuild it with the same versions and --include-hard-vetoed, or drop "
                 "--risk-model-id"
             )
-        selected = _topn_selection(conn, cycle_run_id, as_of, model, expected_count=pool_size)
-
         ids, sigma_full = load_covariance(conn, risk_model_id)
         if not ids:
             raise CycleSelectionError(
                 f"no stored covariance for risk model {risk_model_id}; re-run build-risk-model "
                 "without --no-store-cov"
             )
+        if universe_pool:
+            # Phase 1 §1.5: the pool is the model's whole panel -- the MARKOWITZ_BASE universe,
+            # hard-vetoed names included (build-risk-model ran with --include-hard-vetoed).
+            selected = [int(asset_id) for asset_id in ids]
+        else:
+            assert cycle_run_id is not None
+            selected = _topn_selection(conn, cycle_run_id, as_of, model, expected_count=pool_size)
         index = {a: i for i, a in enumerate(ids)}
         missing = [a for a in selected if a not in index]
         if missing:
@@ -1020,7 +1047,9 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
                     time.perf_counter() - started,
                 )
             elif satellite_weighting == "mincvar":
-                scenarios = _scenario_returns(conn, settings, manifest, as_of, held_ids)
+                scenarios = _scenario_returns(
+                    conn, settings, manifest, as_of, held_ids, cvar_scenarios
+                )
                 res = min_cvar(
                     scenarios,
                     method_sigma,
@@ -1042,7 +1071,9 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
                         method_sigma, constraints=method_constraints, solver=solver
                     ).weights,
                     min_cvar(
-                        _scenario_returns(conn, settings, manifest, as_of, held_ids),
+                        _scenario_returns(
+                            conn, settings, manifest, as_of, held_ids, cvar_scenarios
+                        ),
                         method_sigma,
                         beta=0.95,
                         constraints=method_constraints,
@@ -1129,6 +1160,7 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
                 "cycle_run_id": cycle_run_id,
                 "risk_model_id": risk_model_id,
                 "selection_count": len(selected),
+                "pool_mode": "universe" if universe_pool else "cycle",
                 "objectives_ignored": ignored,
             },
             code_version=cv,
@@ -1150,7 +1182,8 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
                 "cycle_run_id": cycle_run_id,
                 "cycle_date": as_of,
                 "selection_count": len(selected),
-                "pool_size": pool_size,
+                "pool_mode": "universe" if universe_pool else "cycle",
+                "pool_size": len(selected) if universe_pool else pool_size,
                 "first_pass_n": first_pass_n,
                 "second_pass": second_pass,
                 "final_n": len(held),
@@ -1170,7 +1203,7 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
                 conn,
                 PortfolioRow(
                     as_of=as_of,
-                    kind=TOPN_KIND,
+                    kind=MCF_KIND if universe_pool else TOPN_KIND,
                     objective=res.objective,
                     solver=res.solver,
                     status=res.status,
@@ -1199,11 +1232,11 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
             model_id=risk_model_id,
             as_of=as_of,
             cycle_run_id=cycle_run_id,
-            kind=TOPN_KIND,
+            kind=MCF_KIND if universe_pool else TOPN_KIND,
             n_positions=len(held),
             status=res.status,
             weight_sum=float(sum(held.values())),
-            pool_size=pool_size,
+            pool_size=len(selected) if universe_pool else pool_size,
             first_pass_n=first_pass_n,
             second_pass=second_pass,
             satellite_weighting=satellite_weighting,

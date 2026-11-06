@@ -1,0 +1,972 @@
+{
+ "version": 1,
+ "scope": [
+  "2022-01-03",
+  "2026-10-15"
+ ],
+ "source": "Phase 1 \u00a71.1 public exit-event table; no per-asset return is stored here",
+ "events": [
+  {
+   "ticker": "WLTW",
+   "asset_id": null,
+   "stint_end": "2022-01-09",
+   "last_return_session": null,
+   "type": "other",
+   "valuation_basis": "observed_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1140536/000119312522004045/d267396d8k.htm",
+   "note": "ticker change, not an exit: the CIK's line continues as WTW"
+  },
+  {
+   "ticker": "GPS",
+   "asset_id": 235,
+   "stint_end": "2022-02-02",
+   "last_return_session": "2022-02-02",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2022-01-26-Constellation-Energy-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "XLNX",
+   "asset_id": 582,
+   "stint_end": "2022-02-14",
+   "last_return_session": "2022-02-11",
+   "type": "acquisition_stock",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/743988/000110465922021762/0001104659-22-021762-index.htm",
+   "note": "acquisition; consideration: stock; the consideration is not modelled"
+  },
+  {
+   "ticker": "INFO",
+   "asset_id": 285,
+   "stint_end": "2022-03-01",
+   "last_return_session": null,
+   "type": "acquisition_stock",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1598014/000119312522056012/0001193125-22-056012-index.htm",
+   "note": "acquisition; consideration: stock; the consideration is not modelled"
+  },
+  {
+   "ticker": "PBCT",
+   "asset_id": 417,
+   "stint_end": "2022-04-03",
+   "last_return_session": "2022-04-01",
+   "type": "acquisition_stock",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1378946/000119312522094315/0001193125-22-094315-index.htm",
+   "note": "acquisition; consideration: stock; the consideration is not modelled"
+  },
+  {
+   "ticker": "DISCA",
+   "asset_id": null,
+   "stint_end": "2022-04-10",
+   "last_return_session": null,
+   "type": "other",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2022-04-07-S-P-Dow-Jones-Indices-Announces-Treatment-of-AT-T-Transaction-with-Discovery",
+   "note": "ticker change, not an exit: the CIK's line continues as WBD"
+  },
+  {
+   "ticker": "DISCK",
+   "asset_id": 162,
+   "stint_end": "2022-04-10",
+   "last_return_session": "2022-04-08",
+   "type": "other",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2022-04-07-S-P-Dow-Jones-Indices-Announces-Treatment-of-AT-T-Transaction-with-Discovery",
+   "note": "share-class conversion into WBD; sold at the last close (consideration not modelled)"
+  },
+  {
+   "ticker": "CERN",
+   "asset_id": 100,
+   "stint_end": "2022-06-07",
+   "last_return_session": "2022-06-07",
+   "type": "acquisition_cash",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/804753/000119312522169841/0001193125-22-169841-index.htm",
+   "note": "acquisition; consideration: cash; the consideration is not modelled"
+  },
+  {
+   "ticker": "FB",
+   "asset_id": null,
+   "stint_end": "2022-06-08",
+   "last_return_session": null,
+   "type": "other",
+   "valuation_basis": "observed_last_close",
+   "source": "https://www.prnewswire.com/news-releases/meta-to-change-ticker-symbol-to-meta-on-june-9-2022-301558000.html",
+   "note": "ticker change, not an exit: the CIK's line continues as META"
+  },
+  {
+   "ticker": "IPGP",
+   "asset_id": 291,
+   "stint_end": "2022-06-20",
+   "last_return_session": "2022-06-17",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2022-06-03-Keurig-Dr-Pepper_-VICI-Properties-and-ON-Semiconductor-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400_-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "UA",
+   "asset_id": 531,
+   "stint_end": "2022-06-20",
+   "last_return_session": "2022-06-17",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2022-06-03-Keurig-Dr-Pepper_-VICI-Properties-and-ON-Semiconductor-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400_-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "UAA",
+   "asset_id": 532,
+   "stint_end": "2022-06-20",
+   "last_return_session": "2022-06-17",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2022-06-03-Keurig-Dr-Pepper_-VICI-Properties-and-ON-Semiconductor-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400_-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "PENN",
+   "asset_id": 421,
+   "stint_end": "2022-09-18",
+   "last_return_session": "2022-09-16",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2022-09-02-CoStar-Group_-Invitation-Homes-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400_-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "PVH",
+   "asset_id": 445,
+   "stint_end": "2022-09-18",
+   "last_return_session": "2022-09-16",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2022-09-02-CoStar-Group_-Invitation-Homes-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400_-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "CTXS",
+   "asset_id": 142,
+   "stint_end": "2022-10-02",
+   "last_return_session": "2022-09-29",
+   "type": "acquisition_cash",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/877890/000119312522256805/0001193125-22-256805-index.htm",
+   "note": "acquisition; consideration: cash; the consideration is not modelled"
+  },
+  {
+   "ticker": "DRE",
+   "asset_id": 170,
+   "stint_end": "2022-10-02",
+   "last_return_session": "2022-09-30",
+   "type": "acquisition_stock",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/783280/000110465922105242/0001104659-22-105242-index.htm",
+   "note": "acquisition; consideration: stock; the consideration is not modelled"
+  },
+  {
+   "ticker": "NLSN",
+   "asset_id": 389,
+   "stint_end": "2022-10-11",
+   "last_return_session": "2022-10-11",
+   "type": "acquisition_cash",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1492633/000119312522260583/0001193125-22-260583-index.htm",
+   "note": "acquisition; consideration: cash; the consideration is not modelled"
+  },
+  {
+   "ticker": "TWTR",
+   "asset_id": 527,
+   "stint_end": "2022-10-31",
+   "last_return_session": "2022-10-27",
+   "type": "acquisition_cash",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1418091/000119312522272772/0001193125-22-272772-index.htm",
+   "note": "acquisition; consideration: cash; the consideration is not modelled"
+  },
+  {
+   "ticker": "FBHS",
+   "asset_id": 212,
+   "stint_end": "2022-12-18",
+   "last_return_session": "2022-12-16",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2022-12-12-First-Solar-Set-to-Join-S-P-500-Fortune-Brands-Innovations-to-Join-S-P-MidCap-400-MasterBrand-to-Join-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "MBC",
+   "asset_id": 347,
+   "stint_end": "2022-12-18",
+   "last_return_session": "2022-12-16",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2022-12-12-First-Solar-Set-to-Join-S-P-500-Fortune-Brands-Innovations-to-Join-S-P-MidCap-400-MasterBrand-to-Join-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "ABMD",
+   "asset_id": 6,
+   "stint_end": "2022-12-21",
+   "last_return_session": "2022-12-21",
+   "type": "acquisition_cash",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/815094/000119312522311074/0001193125-22-311074-index.htm",
+   "note": "acquisition; consideration: cash; the consideration is not modelled"
+  },
+  {
+   "ticker": "VNO",
+   "asset_id": 551,
+   "stint_end": "2023-01-04",
+   "last_return_session": "2023-01-04",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2022-12-28-GE-HealthCare-Technologies-Set-to-Join-S-P-500-Vornado-Realty-Trust-to-Join-S-P-MidCap-400-RXO-to-Join-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "SBNY",
+   "asset_id": 469,
+   "stint_end": "2023-03-14",
+   "last_return_session": "2023-03-10",
+   "type": "failure",
+   "valuation_basis": "imputed_reference",
+   "source": "https://www.fdic.gov/news/press-releases/2023/pr23017.html",
+   "note": "FDIC receivership; no public source states the common equity's terminal value, so the Shumway imputation applies (sensitivity at 0 and -1 in REPORT)"
+  },
+  {
+   "ticker": "SIVB",
+   "asset_id": 475,
+   "stint_end": "2023-03-14",
+   "last_return_session": "2023-03-09",
+   "type": "failure",
+   "valuation_basis": "imputed_reference",
+   "source": "https://www.fdic.gov/news/press-releases/2023/pr23016.html",
+   "note": "FDIC receivership; no public source states the common equity's terminal value, so the Shumway imputation applies (sensitivity at 0 and -1 in REPORT)"
+  },
+  {
+   "ticker": "LUMN",
+   "asset_id": 337,
+   "stint_end": "2023-03-19",
+   "last_return_session": "2023-03-17",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2023-03-03-Fair-Isaac-Co-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "FRC",
+   "asset_id": 229,
+   "stint_end": "2023-05-03",
+   "last_return_session": "2023-04-28",
+   "type": "failure",
+   "valuation_basis": "imputed_reference",
+   "source": "https://www.fdic.gov/news/press-releases/2023/pr23034.html",
+   "note": "FDIC receivership; no public source states the common equity's terminal value, so the Shumway imputation applies (sensitivity at 0 and -1 in REPORT)"
+  },
+  {
+   "ticker": "DISH",
+   "asset_id": 163,
+   "stint_end": "2023-06-19",
+   "last_return_session": "2023-06-16",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2023-06-02-Palo-Alto-Networks-Set-to-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "FTRE",
+   "asset_id": 233,
+   "stint_end": "2023-07-05",
+   "last_return_session": "2023-07-05",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2023-06-28-Fortrea-Holdings-and-PHINIA-Set-to-Join-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "PHIN",
+   "asset_id": 428,
+   "stint_end": "2023-07-05",
+   "last_return_session": "2023-07-05",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2023-06-28-Fortrea-Holdings-and-PHINIA-Set-to-Join-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "RE",
+   "asset_id": null,
+   "stint_end": "2023-07-09",
+   "last_return_session": null,
+   "type": "other",
+   "valuation_basis": "observed_last_close",
+   "source": "https://www.businesswire.com/news/home/20230518005273/en/Everest-Re-Group-Rebrands-as-Everest-Group-Ltd.",
+   "note": "ticker change, not an exit: the CIK's line continues as EG"
+  },
+  {
+   "ticker": "AAP",
+   "asset_id": 3,
+   "stint_end": "2023-08-24",
+   "last_return_session": "2023-08-24",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2023-08-21-Kenvue-Set-to-Join-S-P-500-Advance-Auto-Parts-to-Join-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "LNC",
+   "asset_id": 332,
+   "stint_end": "2023-09-17",
+   "last_return_session": "2023-09-15",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2023-09-01-Blackstone-and-Airbnb-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "NWL",
+   "asset_id": 399,
+   "stint_end": "2023-09-17",
+   "last_return_session": "2023-09-15",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2023-09-01-Blackstone-and-Airbnb-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "DXC",
+   "asset_id": 176,
+   "stint_end": "2023-10-02",
+   "last_return_session": "2023-10-02",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2023-09-28-Veralto-Set-to-Join-S-P-500-Vestis-to-Join-S-P-MidCap-400-Others-to-Join-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "ATVI",
+   "asset_id": 51,
+   "stint_end": "2023-10-17",
+   "last_return_session": "2023-10-12",
+   "type": "acquisition_cash",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/718877/000110465923108985/0001104659-23-108985-index.htm",
+   "note": "acquisition; consideration: cash; the consideration is not modelled"
+  },
+  {
+   "ticker": "OGN",
+   "asset_id": 405,
+   "stint_end": "2023-10-17",
+   "last_return_session": "2023-10-17",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2023-10-13-Lululemon-Athletica-Hubbell-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "ALK",
+   "asset_id": 26,
+   "stint_end": "2023-12-17",
+   "last_return_session": "2023-12-15",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2023-12-01-Uber-Technologies_-Jabil-and-Builders-FirstSource-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "SEDG",
+   "asset_id": 472,
+   "stint_end": "2023-12-17",
+   "last_return_session": "2023-12-15",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2023-12-01-Uber-Technologies_-Jabil-and-Builders-FirstSource-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "SEE",
+   "asset_id": 473,
+   "stint_end": "2023-12-17",
+   "last_return_session": "2023-12-15",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2023-12-01-Uber-Technologies_-Jabil-and-Builders-FirstSource-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "CDAY",
+   "asset_id": null,
+   "stint_end": "2024-01-31",
+   "last_return_session": null,
+   "type": "other",
+   "valuation_basis": "observed_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1725057/000095017024009619/day-20240131.htm",
+   "note": "ticker change, not an exit: the CIK's line continues as DAY"
+  },
+  {
+   "ticker": "WHR",
+   "asset_id": 570,
+   "stint_end": "2024-03-17",
+   "last_return_session": "2024-03-15",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2024-03-01-Super-Micro-Computer-and-Deckers-Outdoor-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "ZION",
+   "asset_id": 590,
+   "stint_end": "2024-03-17",
+   "last_return_session": "2024-03-15",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2024-03-01-Super-Micro-Computer-and-Deckers-Outdoor-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "FLT",
+   "asset_id": null,
+   "stint_end": "2024-03-24",
+   "last_return_session": null,
+   "type": "other",
+   "valuation_basis": "observed_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1175454/000162828024010593/exhibit991corpayrebrand_re.htm",
+   "note": "ticker change, not an exit: the CIK's line continues as CPAY"
+  },
+  {
+   "ticker": "VFC",
+   "asset_id": 545,
+   "stint_end": "2024-04-02",
+   "last_return_session": "2024-04-02",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2024-03-27-GE-Vernova-and-Solventum-Set-to-Join-S-P-500-Dentsply-Sirona-to-Join-S-P-MidCap-400-Others-to-Join-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "XRAY",
+   "asset_id": 584,
+   "stint_end": "2024-04-02",
+   "last_return_session": "2024-04-02",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2024-03-27-GE-Vernova-and-Solventum-Set-to-Join-S-P-500-Dentsply-Sirona-to-Join-S-P-MidCap-400-Others-to-Join-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "PXD",
+   "asset_id": 447,
+   "stint_end": "2024-05-07",
+   "last_return_session": "2024-05-02",
+   "type": "acquisition_stock",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1038357/000119312524130052/0001193125-24-130052-index.htm",
+   "note": "acquisition; consideration: stock; the consideration is not modelled"
+  },
+  {
+   "ticker": "CMA",
+   "asset_id": 111,
+   "stint_end": "2024-06-23",
+   "last_return_session": "2024-06-21",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2024-06-07-KKR_-CrowdStrike-Holdings-and-GoDaddy-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "ILMN",
+   "asset_id": 283,
+   "stint_end": "2024-06-23",
+   "last_return_session": "2024-06-21",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2024-06-07-KKR_-CrowdStrike-Holdings-and-GoDaddy-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; the asset rejoins in 2026, so its series continues; the forced recognition date sells at the exit close (declared extension, REPORT \u00a711)",
+   "force_exit": true,
+   "recognition_date": "2024-06-24"
+  },
+  {
+   "ticker": "RHI",
+   "asset_id": 457,
+   "stint_end": "2024-06-23",
+   "last_return_session": "2024-06-21",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2024-06-07-KKR_-CrowdStrike-Holdings-and-GoDaddy-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "WRK",
+   "asset_id": 575,
+   "stint_end": "2024-07-07",
+   "last_return_session": null,
+   "type": "acquisition_stock",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1732845/000095014224001867/0000950142-24-001867-index.htm",
+   "note": "acquisition; consideration: stock; the consideration is not modelled"
+  },
+  {
+   "ticker": "AAL",
+   "asset_id": 2,
+   "stint_end": "2024-09-22",
+   "last_return_session": "2024-09-20",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2024-09-06-Palantir-Technologies_-Dell-Technologies_-and-Erie-Indemnity-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "BIO",
+   "asset_id": 71,
+   "stint_end": "2024-09-22",
+   "last_return_session": "2024-09-20",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2024-09-06-Palantir-Technologies_-Dell-Technologies_-and-Erie-Indemnity-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "ETSY",
+   "asset_id": 201,
+   "stint_end": "2024-09-22",
+   "last_return_session": "2024-09-20",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2024-09-06-Palantir-Technologies_-Dell-Technologies_-and-Erie-Indemnity-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "BBWI",
+   "asset_id": 63,
+   "stint_end": "2024-09-30",
+   "last_return_session": "2024-09-30",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2024-09-24-Amentum-Set-to-Join-S-P-500-Bath-Body-Works-to-Join-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "MRO",
+   "asset_id": 370,
+   "stint_end": "2024-11-25",
+   "last_return_session": "2024-11-21",
+   "type": "acquisition_stock",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/101778/000010177823000003/0000101778-23-000003-index.htm",
+   "note": "acquisition; consideration: stock; the consideration is not modelled"
+  },
+  {
+   "ticker": "AMTM",
+   "asset_id": 36,
+   "stint_end": "2024-12-22",
+   "last_return_session": "2024-12-20",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2024-12-06-Apollo-Global-Management-and-Workday-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "CTLT",
+   "asset_id": 138,
+   "stint_end": "2024-12-22",
+   "last_return_session": "2024-12-17",
+   "type": "acquisition_cash",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1596783/000119312524280922/0001193125-24-280922-index.htm",
+   "note": "acquisition; consideration: cash; the consideration is not modelled"
+  },
+  {
+   "ticker": "QRVO",
+   "asset_id": 451,
+   "stint_end": "2024-12-22",
+   "last_return_session": "2024-12-20",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2024-12-06-Apollo-Global-Management-and-Workday-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "BWA",
+   "asset_id": 82,
+   "stint_end": "2025-03-23",
+   "last_return_session": "2025-03-21",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2025-03-07-DoorDash_-TKO-Group-Holdings_-Williams-Sonoma-and-Expand-Energy-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "CE",
+   "asset_id": 98,
+   "stint_end": "2025-03-23",
+   "last_return_session": "2025-03-21",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2025-03-07-DoorDash_-TKO-Group-Holdings_-Williams-Sonoma-and-Expand-Energy-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "FMC",
+   "asset_id": 226,
+   "stint_end": "2025-03-23",
+   "last_return_session": "2025-03-21",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2025-03-07-DoorDash_-TKO-Group-Holdings_-Williams-Sonoma-and-Expand-Energy-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "TFX",
+   "asset_id": 508,
+   "stint_end": "2025-03-23",
+   "last_return_session": "2025-03-21",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2025-03-07-DoorDash_-TKO-Group-Holdings_-Williams-Sonoma-and-Expand-Energy-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "DFS",
+   "asset_id": 156,
+   "stint_end": "2025-05-18",
+   "last_return_session": "2025-05-16",
+   "type": "acquisition_stock",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1393612/000119312525122107/0001193125-25-122107-index.htm",
+   "note": "acquisition; consideration: stock; the consideration is not modelled"
+  },
+  {
+   "ticker": "JNPR",
+   "asset_id": 305,
+   "stint_end": "2025-07-08",
+   "last_return_session": "2025-07-01",
+   "type": "acquisition_cash",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1043604/000119312525154400/0001193125-25-154400-index.htm",
+   "note": "acquisition; consideration: cash; the consideration is not modelled"
+  },
+  {
+   "ticker": "ANSS",
+   "asset_id": 39,
+   "stint_end": "2025-07-17",
+   "last_return_session": "2025-07-16",
+   "type": "acquisition_cash",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1013462/000114036125026141/0001140361-25-026141-index.htm",
+   "note": "acquisition; consideration: mixed; the consideration is not modelled (cash + shares; grouped with stock, same valuation basis)"
+  },
+  {
+   "ticker": "HES",
+   "asset_id": 260,
+   "stint_end": "2025-07-22",
+   "last_return_session": "2025-07-17",
+   "type": "acquisition_stock",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/4447/000095014225001950/0000950142-25-001950-index.htm",
+   "note": "acquisition; consideration: stock; the consideration is not modelled"
+  },
+  {
+   "ticker": "WBA",
+   "asset_id": 563,
+   "stint_end": "2025-08-27",
+   "last_return_session": "2025-08-27",
+   "type": "acquisition_cash",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1618921/000119312523001940/0001193125-23-001940-index.htm",
+   "note": "acquisition; consideration: cash; the consideration is not modelled"
+  },
+  {
+   "ticker": "CZR",
+   "asset_id": 146,
+   "stint_end": "2025-09-21",
+   "last_return_session": "2025-09-19",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2025-09-05-AppLovin_-Robinhood-Markets-and-Emcor-Group-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "ENPH",
+   "asset_id": 191,
+   "stint_end": "2025-09-21",
+   "last_return_session": "2025-09-19",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2025-09-05-AppLovin_-Robinhood-Markets-and-Emcor-Group-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "MKTX",
+   "asset_id": 359,
+   "stint_end": "2025-09-21",
+   "last_return_session": "2025-09-19",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2025-09-05-AppLovin_-Robinhood-Markets-and-Emcor-Group-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "KMX",
+   "asset_id": 317,
+   "stint_end": "2025-10-30",
+   "last_return_session": "2025-10-30",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2025-10-27-Solstice-Advance-Materials-and-Qnity-Electronics-Set-to-Join-S-P-500-Others-to-Join-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "EMN",
+   "asset_id": 189,
+   "stint_end": "2025-11-03",
+   "last_return_session": "2025-11-03",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2025-10-27-Solstice-Advance-Materials-and-Qnity-Electronics-Set-to-Join-S-P-500-Others-to-Join-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "IPG",
+   "asset_id": 290,
+   "stint_end": "2025-11-27",
+   "last_return_session": "2025-11-26",
+   "type": "acquisition_stock",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/51644/000119312525300704/0001193125-25-300704-index.htm",
+   "note": "acquisition; consideration: stock; the consideration is not modelled"
+  },
+  {
+   "ticker": "K",
+   "asset_id": 307,
+   "stint_end": "2025-12-10",
+   "last_return_session": "2025-12-10",
+   "type": "acquisition_cash",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/55067/000119312523249062/0001193125-23-249062-index.htm",
+   "note": "acquisition; consideration: cash; the consideration is not modelled"
+  },
+  {
+   "ticker": "LKQ",
+   "asset_id": 329,
+   "stint_end": "2025-12-21",
+   "last_return_session": "2025-12-19",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2025-12-05-CRH_-Carvana-and-Comfort-Systems-USA-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "MHK",
+   "asset_id": 357,
+   "stint_end": "2025-12-21",
+   "last_return_session": "2025-12-19",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2025-12-05-CRH_-Carvana-and-Comfort-Systems-USA-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "SOLS",
+   "asset_id": 484,
+   "stint_end": "2025-12-21",
+   "last_return_session": "2025-12-19",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2025-12-05-CRH_-Carvana-and-Comfort-Systems-USA-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "DAY",
+   "asset_id": 150,
+   "stint_end": "2026-02-08",
+   "last_return_session": "2026-02-03",
+   "type": "acquisition_cash",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1725057/000114036126003628/0001140361-26-003628-index.htm",
+   "note": "acquisition; consideration: cash; the consideration is not modelled"
+  },
+  {
+   "ticker": "LW",
+   "asset_id": 340,
+   "stint_end": "2026-03-22",
+   "last_return_session": "2026-03-20",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2026-03-06-Vertiv-Holdings_-Lumentum-Holdings_-Coherent_-and-EchoStar-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400_-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "MOH",
+   "asset_id": 364,
+   "stint_end": "2026-03-22",
+   "last_return_session": "2026-03-20",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2026-03-06-Vertiv-Holdings_-Lumentum-Holdings_-Coherent_-and-EchoStar-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400_-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "MTCH",
+   "asset_id": 378,
+   "stint_end": "2026-03-22",
+   "last_return_session": "2026-03-20",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2026-03-06-Vertiv-Holdings_-Lumentum-Holdings_-Coherent_-and-EchoStar-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400_-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "PAYC",
+   "asset_id": 415,
+   "stint_end": "2026-03-22",
+   "last_return_session": "2026-03-20",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2026-03-06-Vertiv-Holdings_-Lumentum-Holdings_-Coherent_-and-EchoStar-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400_-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "HOLX",
+   "asset_id": 264,
+   "stint_end": "2026-04-08",
+   "last_return_session": "2026-04-06",
+   "type": "acquisition_cash",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/859737/000119312526144632/0001193125-26-144632-index.htm",
+   "note": "acquisition; consideration: cash; the consideration is not modelled"
+  },
+  {
+   "ticker": "CTRA",
+   "asset_id": 139,
+   "stint_end": "2026-05-06",
+   "last_return_session": "2026-05-06",
+   "type": "acquisition_stock",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/858470/000110465926057278/0001104659-26-057278-index.htm",
+   "note": "acquisition; consideration: stock; the consideration is not modelled"
+  },
+  {
+   "ticker": "EPAM",
+   "asset_id": 193,
+   "stint_end": "2026-06-01",
+   "last_return_session": "2026-06-01",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2026-05-27-FedEx-Freight-Holding-Company-Set-to-Join-S-P-500-EPAM-Systems-and-Dave-to-Join-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "CPB",
+   "asset_id": 127,
+   "stint_end": "2026-06-21",
+   "last_return_session": "2026-06-18",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2026-06-05-Marvell-Technology-and-Flex-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "POOL",
+   "asset_id": 438,
+   "stint_end": "2026-06-21",
+   "last_return_session": "2026-06-18",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2026-06-05-Marvell-Technology-and-Flex-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "SATS",
+   "asset_id": null,
+   "stint_end": "2026-06-23",
+   "last_return_session": null,
+   "type": "other",
+   "valuation_basis": "observed_last_close",
+   "source": "https://www.globenewswire.com/news-release/2026/06/22/3103006/0/en/EchoStar-Corporation-to-Change-Nasdaq-Ticker-Symbol-to-ECHO.html",
+   "note": "ticker change, not an exit: the CIK's line continues as ECHO"
+  },
+  {
+   "ticker": "CAG",
+   "asset_id": 86,
+   "stint_end": "2026-06-29",
+   "last_return_session": "2026-06-29",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2026-06-23-Honeywell-Aerospace-Set-to-Join-S-P-500-S-P-100-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "EA",
+   "asset_id": 178,
+   "stint_end": "2026-08-04",
+   "last_return_session": "2026-08-04",
+   "type": "acquisition_cash",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/712515/000114036126031157/0001140361-26-031157-index.htm",
+   "note": "acquisition; consideration: cash; the consideration is not modelled"
+  },
+  {
+   "ticker": "AVB",
+   "asset_id": 52,
+   "stint_end": "2026-08-17",
+   "last_return_session": "2026-08-14",
+   "type": "acquisition_stock",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/915912/000110465926097833/0001104659-26-097833-index.htm",
+   "note": "acquisition; consideration: stock; the consideration is not modelled"
+  },
+  {
+   "ticker": "BLDR",
+   "asset_id": 74,
+   "stint_end": "2026-09-20",
+   "last_return_session": "2026-09-18",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2026-09-04-Bloom-Energy_-Illumina_-and-Everpure-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400_-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "TAP",
+   "asset_id": 501,
+   "stint_end": "2026-09-20",
+   "last_return_session": "2026-09-18",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2026-09-04-Bloom-Energy_-Illumina_-and-Everpure-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400_-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "TTD",
+   "asset_id": 524,
+   "stint_end": "2026-09-20",
+   "last_return_session": "2026-09-18",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2026-09-04-Bloom-Energy_-Illumina_-and-Everpure-Set-to-Join-S-P-500-Others-to-Join-S-P-100_-S-P-MidCap-400_-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "CTVA",
+   "asset_id": 141,
+   "stint_end": "2026-10-05",
+   "last_return_session": "2026-10-05",
+   "type": "index_removal",
+   "valuation_basis": "observed_last_close",
+   "source": "https://press.spglobal.com/2026-10-01-Vylor-Added-to-the-S-P-500-Twilio-Set-to-Join-S-P-500-Others-to-Join-S-P-MidCap-400-and-S-P-SmallCap-600",
+   "note": "S&P 500 deletion; still listed afterwards, sold at the exit close"
+  },
+  {
+   "ticker": "WBD",
+   "asset_id": 564,
+   "stint_end": "2026-10-05",
+   "last_return_session": "2026-10-05",
+   "type": "acquisition_stock",
+   "valuation_basis": "approximation_last_close",
+   "source": "https://www.sec.gov/Archives/edgar/data/1437107/000119312522103051/0001193125-22-103051-index.htm",
+   "note": "acquisition; consideration: stock; the consideration is not modelled"
+  }
+ ]
+}

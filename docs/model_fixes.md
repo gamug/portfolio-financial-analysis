@@ -11346,10 +11346,10 @@ flagged multi-class caps are declared limitations (L-43), not defects of the for
 `tests/test_cover_audit.py` (seeding, write-time correction and its log, the shell removal, an unrecorded count left
 alone) and `tests/test_audit_l43_class_rates.py`.
 
-## PIT-RET — the backtest return panel kept only the members as of the window's end (2026-11-06)
+## PIT-RET — the backtest return panel kept only the members as of the window's end (2026-11-05)
 
-**Status**: fixed 2026-11-06 (commit `4b42e59`); used by the fixed templates. The 18-run
-corrective batch kept under `out/pitfix/runs/` is superseded by reviewer A's 2026-11-06 scope
+**Status**: fixed 2026-11-05 (commit `4b42e59`); used by the fixed templates. The 18-run
+corrective batch kept under `out/pitfix/runs/` is superseded by reviewer A's 2026-11-05 scope
 change (further corrections before any run) and is not interpreted. Reporting only: no
 Shumway sensitivity is applied to any stored run.
 
@@ -11404,7 +11404,7 @@ at their exits (DISCK 2022-04-08, SIVB 2023-03-09, PXD 2024-05-02, HES 2025-07-1
 templates' `score_snapshot` rows are identical to the old templates' in every window
 (`out/pitfix/verify_templates.log`). A corrective 18-run batch (FINAL at 10/20 bp and B0, six
 windows, all arms) was completed and kept under `out/pitfix/runs/` with its `run_index.json`;
-reviewer A's 2026-11-06 scope change supersedes those runs before any old-vs-new report, so they
+reviewer A's 2026-11-05 scope change supersedes those runs before any old-vs-new report, so they
 are preserved but not used for a selection or a report.
 
 **Residual scope**: no Shumway return is applied; the corrective runs above are superseded and
@@ -11412,3 +11412,111 @@ are not interpreted. No new LLM score was made; the 30-configuration trial set w
 so PBO, DSR and White's Reality Check are not recomputed. Leavers whose gateway line has no
 action rows keep a zero dividend for that line; this is the existing data limitation, not a new
 one. The fixed panel still cannot include a line the database never stored (L-42).
+
+## EXIT-TERM — a declared exit policy with terminal values from a public table (2026-11-06)
+
+**Status**: Phase 1 §1.1. The engine no longer treats every missing return as a data gap: an
+asset whose point-in-time stint ends earns a declared terminal return on its recognition
+session, and a suspension is frozen instead of sold.
+
+**Symptom**: before this change a held asset with no return was valued at its last close,
+moved to cash and charged 10 bp, whatever the reason it stopped printing. That is the correct
+mandate policy for an index removal, but it silently gave 0 % to a bankruptcy (Shumway 1997
+measures a large negative delisting return) and it forced a sale of a suspended name that was
+not tradable.
+
+**Fix**: `docs/exit_events.json` is the public table (96 stints ending 2022-01-03…2026-10-15;
+ticker, asset id, stint end, last return session, type, valuation basis, source URL, note; no
+per-asset return). `cycle.backtest.exits` validates it and maps each basis to a **code
+constant**, never a per-row value: `observed_last_close` and `approximation_last_close` → 0,
+`documented_worthless` → −1.0 (Shumway 1997, Table V, line 3), `imputed_reference` → −0.299
+(Table V, line 5), `unobservable_frozen` → no value change and no trade, and
+`documented_recovery` → an asset-specific value from
+`/workspaces/thesis/data/private/exit_recoveries.json` (sha256 recorded, never in the repo).
+On the recognition session the terminal return is applied to the drifted weight first, then the
+residual `w_i (1 + r_term) / (1 + r_p)` is liquidated and charged 10 bp; a −1.0 position has
+residual 0 and pays no cost. The engine's old missing-return turnover is exactly this residual
+at `r_term = 0` (a unit test pins it). `--exit-events` is the driver seam; a table row with
+`unknown` is refused, so an unsourced event can never be run.
+
+**Design decisions**: (1) the three bank failures (SIVB, SBNY, FRC) are `failure` with
+`imputed_reference`: the FDIC press releases document the receivership but none states the
+common equity's terminal value, so the plan's `documented_worthless` condition is not met; the
+sensitivity at 0 and −1.0 is reported. (2) No `documented_recovery` case exists (REPORT says
+so). (3) ILMN's series continues because it rejoins the index in 2026; its 2024 stint carries
+`force_exit` and an explicit recognition date, so a held position is still sold at the exit
+close. This is the one case where the plan's "our price series end at the index exit" premise
+does not hold; the mandate policy is applied explicitly and the case is reported. (4) The
+seven ticker-only changes are `other` rows with no asset; they are not exits.
+
+**Verification**: `tests/test_backtest_exits.py` (table validation, the four standard bases,
+the zero-cost −1.0 check, the residual identity, frozen positions, the recovery distribution
+date, the forced exit); the classification and the sources are in the table itself. The
+measured per-arm exits are in the Phase-1 REPORT.
+
+## CVAR-SIMPLE — the min-CVaR LP read log returns as if they were simple (2026-11-06)
+
+**Status**: Phase 1 §1.2. `quant.persist._scenario_returns` now converts the stored
+`tr_log_return` panel with `np.expm1` before the min-CVaR LP (the CVaR member of B5 and of the
+B6 ensemble), because Rockafellar & Uryasev's loss `f(x, y) = -x'y` is linear in **simple**
+returns. Covariance estimation is unchanged. `--cvar-scenarios log` (or
+`QuantSettings.cvar_scenarios`) keeps the old matrix for the correction ladder only; the
+default is `simple`.
+
+**Symptom**: a −50 % simple return is −69.3 % in log units, so the LP over-penalised the left
+tail of every name and understated the weight the same risk model would choose in the units the
+objective is written in. The sign of the effect is data-dependent; the measured max |Δw| and
+CVaR95 difference on the 61 FINAL decisions are in the REPORT.
+
+**Verification**: `tests/test_quant_weighting.py::test_simple_return_scenarios_change_the_min_cvar_solution`
+(a synthetic crash scenario where the two solutions differ, and the direction the algebra
+predicts); the Phase-1 R1 vs L1/L2 ladder measures it on the corrected panel.
+
+## FILTER-TR — the 210-session filter read the price series, not total return (2026-11-06)
+
+**Status**: Phase 1 §1.3. `cycle.backtest.core.total_return_index` builds
+`TR_t = TR_{t-1}(1 + r_t)` from `spy_tr.json`'s daily total returns, and the driver feeds that
+index to `trend_trigger` when `--filter-series tr` (the default). `--filter-series price`
+keeps the split-adjusted close for the correction ladder. The 210-session window and the
+decision-date evaluation are unchanged.
+
+**Reference**: Faber (2013, p. 15) computes the signal on total-return series. The measured
+effect on the 61 FINAL decision dates is in the REPORT; the two dates reviewer A named
+(2023-01-12 and 2026-03-25, cash → invested) are checked there.
+
+**Verification**: `tests/test_backtest_v2.py` (the TR index compounding and a synthetic price
+fall / TR rise where the two inputs disagree); the driver records `filter_series` in
+`params_json`. The old v2/v3/v4 known-answer tests state `filter_series="price"` explicitly.
+
+## WINDOW-C1 — the continuous window is a window-table entry (2026-11-06)
+
+**Status**: Phase 1 §1.4. `WINDOWS["C1"] = ("2022-01-03", "2026-10-15")`; the existing
+`schedule_for` already produces one formation and one `E_k = D1 + 21k` grid without resets, and
+the PIT panel, warm-up, GUARD state and exit policy are the same code paths as P1/H3. No other
+driver change was needed (the change is local to the window table, as the plan requires).
+
+**Verification**: `tests/test_backtest_calendar.py` pins C1's 58 execution dates; the Phase-1
+R8 run produces the continuous NAV paths.
+
+## MCF-POOL — MARKOWITZ_CORE_FILTER takes the whole eligible PIT panel (2026-11-06)
+
+**Status**: Phase 1 §1.5. `quant optimize --pool-all` (with `--risk-model-id` and no
+`--cycle-run-id`) sizes the min-variance book on every asset in the stored risk model's panel —
+the MARKOWITZ_BASE universe, hard-vetoed names included, because `build-risk-model` runs with
+`--include-hard-vetoed`. It calls the **same** solve/second-pass code path as the cycle-pool
+book: first pass on the pool, then the 30 largest names re-solved, name cap 1.5/30 = 5 % and
+sector cap 30 % in both passes. The book is persisted as `kind = "min_var_mcf"` so it never
+collides with `min_var` or `min_var_topn`. The driver's `--pool-mode universe` selects it while
+keeping the same core blend, total-return filter with exit 0.5, 10 bp costs and GUARD [1, 3, 4]
+with Basing Points on the satellite.
+
+**Verification**: `tests/test_quant_topn.py` (the MCF book on the whole panel, the ≤ 30-name
+second pass, the caps, the `min_var_mcf` kind and the refusal of a cycle id); the caps table of
+the three books is in the REPORT.
+
+## LAYER4 — the ablation's layer-4-only cell (2026-11-06)
+
+**Status**: Phase 1 §1.6. The driver's `--guard-layers` validation now accepts any non-empty
+subset of {1, 3, 4}; the old rule required layer 1. The engine already supported the layer list.
+`tests/test_backtest_driver.py::test_layer_4_alone_runs_for_the_ablation` runs a [4]-only book
+end to end and records it in `params_json`.

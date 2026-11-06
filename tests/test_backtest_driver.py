@@ -790,6 +790,9 @@ def test_the_driver_runs_the_v2_core_and_trend_filter_end_to_end(
         core_weight=0.5,
         trend_filter="on",
         core_series_path=spy_path,
+        # Phase 1 §1.3 makes total return the default; this known-answer case states the
+        # price-series behaviour it was written for.
+        filter_series="price",
     )
     assert result["status"] == "completed"
     run = conn.execute(
@@ -798,6 +801,7 @@ def test_the_driver_runs_the_v2_core_and_trend_filter_end_to_end(
     params = json.loads(str(run["params_json"]))
     assert params["core_weight"] == 0.5
     assert params["trend_filter"] == "on"
+    assert params["filter_series"] == "price"
     assert (
         params["core_series_sha256"]
         == json.loads((tmp_path / "manifest.json").read_text())["spy_tr_sha256"]
@@ -865,6 +869,7 @@ def test_the_driver_runs_the_v3_parameters_end_to_end(
         pool_m=2,
         core_source="base",
         filter_exit=0.5,
+        filter_series="price",
     )
     assert result["status"] == "completed"
     run = conn.execute(
@@ -956,6 +961,7 @@ def test_the_driver_runs_the_v4_basing_points_end_to_end(
         core_series_path=spy_path,
         pool_m=2,
         stop_rule="bp3",
+        filter_series="price",
     )
     assert result["status"] == "completed"
     run = conn.execute(
@@ -969,4 +975,32 @@ def test_the_driver_runs_the_v4_basing_points_end_to_end(
     assert params["bp"]["stop_outs"] == 0
     assert params["distance_cells"]  # the 5-<10 / median cell, two names per decision
     assert isinstance(params["core_stop_actions"], list)
+    conn.close()
+
+
+def test_layer_4_alone_runs_for_the_ablation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase 1 §1.6: the ablation's layer-4-only cell is a supported layer list."""
+    db_path, universe_path = _fixture(tmp_path)
+    params_path = _params_file(tmp_path)
+    conn = connect(db_path)
+    monkeypatch.setitem(driver.WINDOWS, "PX", ("2022-01-03", "2022-03-15"))
+    monkeypatch.setattr(driver, "run_quant", _fake_quant(conn, []))
+    monkeypatch.setattr(driver, "run_replay", _fake_replay(conn))
+    monkeypatch.setattr(queries, "risk_model_asset_ids", lambda _c, _m: {1, 2}, raising=False)
+    result = run_backtest(
+        window_id="PX",
+        db_path=db_path,
+        universe_db_path=universe_path,
+        params_path=params_path,
+        warmup_steps=2,
+        arms=["MARKOWITZ_BASE", "TOPN_MV_NOGUARD", "TOPN_MV_GUARD_NO_NLP"],
+        guard_layers=[4],
+    )
+    assert result["status"] == "completed"
+    run = conn.execute(
+        "SELECT params_json FROM backtest_run WHERE id = ?", (result["backtest_run_id"],)
+    ).fetchone()
+    assert json.loads(str(run["params_json"]))["guard_layers"] == [4]
     conn.close()
