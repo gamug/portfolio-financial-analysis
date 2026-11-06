@@ -11452,8 +11452,8 @@ seven ticker-only changes are `other` rows with no asset; they are not exits.
 **Verification**: `tests/test_backtest_exits.py` (table validation, the four standard bases,
 the zero-cost −1.0 check, the residual identity, frozen positions, the recovery distribution
 date, the forced exit); the classification and the sources are in the table itself. On the 327
-Phase-1 runs, 9 distinct tickers were held through an exit (ATVI, CERN, CTXS, JNPR, K, HOLX,
-CTRA, EA, MKTX); the three failures (SIVB, SBNY, FRC) were **never held** (SIVB ranked
+Phase-1 runs, 10 distinct tickers were held through an exit (ATVI, CERN, CTRA, CTXS, EA, HOLX,
+JNPR, K, MKTX, PXD); the three failures (SIVB, SBNY, FRC) were **never held** (SIVB ranked
 477–490 and was not selected; SBNY and FRC were vetoed `UNSCORED` on every H1 decision), so
 the 0 / −1.0 sensitivity changes no reported metric. Full per-arm rows in the Phase-1 REPORT.
 

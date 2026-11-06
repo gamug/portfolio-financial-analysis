@@ -968,6 +968,14 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
     lines.append("")
     exit_rows = _exits_table(out)
     lines.append("### 11.2 Every exit held, per arm and window\n")
+    if exit_rows:
+        total_cost = sum(row["liquidation_cost_bps"] for row in exit_rows)
+        tickers_held = sorted({row["ticker"] for row in exit_rows})
+        lines.append(
+            f"Distinct tickers held through an exit: **{', '.join(tickers_held)}**. "
+            f"Total liquidation cost over these records: **{total_cost:.2f} bps** "
+            f"(sum of the residual weights times 10 bp).\n"
+        )
     lines.append(
         f"This run family held an asset through **{len(exit_rows)}** exit arms/windows. The "
         "residual is the drifted weight on the recognition session; the exit's cost is 10 bp "
