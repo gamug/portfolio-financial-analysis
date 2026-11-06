@@ -15,8 +15,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from cycle.backtest.driver import load_rf
+from cycle.backtest.driver import load_rf, next_session
+from cycle.backtest.exits import TERMINAL_RETURN
 from kg_schema import connect_ro
+
+#: A weight below this is not a holding (the engine's own order tolerance is 1e-12).
+_W_EPS = 1e-12
 
 PARAM_KEYS = (
     "window",
@@ -31,6 +35,14 @@ PARAM_KEYS = (
     "satellite_weighting",
     "guard_layers",
     "vol_target",
+    "filter_series",
+    "cvar_scenarios",
+    "pool_mode",
+    "exit_events_path",
+    "exit_events_sha256",
+    "exit_event_count",
+    "exit_asset_count",
+    "exit_recoveries_sha256",
     "core_asset_id",
     "core_series_path",
     "core_series_sha256",
@@ -108,6 +120,71 @@ def _layer_scales(conn: Any, books: dict[int, str]) -> dict[str, dict[str, Any]]
     return out
 
 
+def _exit_records(conn: Any, books: dict[int, str], params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every declared exit this run held, per arm: ticker/date/type/basis/weight/source.
+
+    Weights and dates are portfolio data; the table carries no per-asset price or return.  The
+    residual drift on the recognition session is the liquidation turnover, and its cost at the
+    run's cost_bps is the exit's share of that session's cost."""
+    path = params.get("exit_events_path")
+    if not path:
+        return []
+    table = json.loads(Path(str(path)).read_text())
+    events = table.get("events", [])
+    if not events:
+        return []
+    tickers = {
+        int(row["asset_id"]): str(row["ticker"])
+        for row in conn.execute(
+            "SELECT w.asset_id, a.ticker FROM book_weight_daily w "
+            "JOIN assets a ON a.id = w.asset_id WHERE w.asset_id IS NOT NULL GROUP BY w.asset_id"
+        )
+    }
+    out: list[dict[str, Any]] = []
+    cost_bps = float(params.get("cost_bps", 10.0))
+    for event in events:
+        asset_id = event.get("asset_id")
+        if asset_id is None:
+            continue
+        recognition = event.get("recognition_date")
+        if recognition is None and event.get("last_return_session"):
+            recognition = next_session(str(event["last_return_session"]))
+        if recognition is None:
+            continue
+        for book_id, arm in books.items():
+            row = conn.execute(
+                "SELECT date, drifted_weight, final_target_weight FROM book_weight_daily "
+                "WHERE book_id = ? AND asset_id = ? AND date = ?",
+                (book_id, int(asset_id), str(recognition)),
+            ).fetchone()
+            if row is None:
+                continue
+            residual = float(row["drifted_weight"] or 0.0)
+            if residual <= _W_EPS:
+                continue
+            before = conn.execute(
+                "SELECT final_target_weight FROM book_weight_daily "
+                "WHERE book_id = ? AND asset_id = ? AND date < ? ORDER BY date DESC LIMIT 1",
+                (book_id, int(asset_id), str(recognition)),
+            ).fetchone()
+            out.append(
+                {
+                    "arm": arm,
+                    "ticker": tickers.get(int(asset_id), event.get("ticker")),
+                    "stint_end": event.get("stint_end"),
+                    "recognition_date": str(recognition),
+                    "type": event.get("type"),
+                    "valuation_basis": event.get("valuation_basis"),
+                    "terminal_return": TERMINAL_RETURN.get(str(event.get("valuation_basis"))),
+                    "weight_before": float(before["final_target_weight"]) if before else 0.0,
+                    "residual_weight": residual,
+                    "liquidation_cost_bps": cost_bps * residual,
+                    "source": event.get("source"),
+                }
+            )
+    return out
+
+
 def main(db: str, out: str) -> int:
     conn = connect_ro(Path(db).expanduser().resolve())
     try:
@@ -131,16 +208,34 @@ def main(db: str, out: str) -> int:
             )
         ]
         daily: dict[str, dict[str, float]] = {}
+        daily_detail: dict[str, dict[str, dict[str, float]]] = {}
         benchmark: dict[str, float] = {}
         for row in conn.execute(
-            "SELECT book_id, date, net_return, benchmark_return "
+            "SELECT book_id, date, gross_return, turnover, cost_return, net_return, "
+            "cash_weight, n_equity, benchmark_return "
             "FROM book_daily_performance ORDER BY date"
         ):
-            daily.setdefault(books[int(row["book_id"])], {})[str(row["date"])] = float(
-                row["net_return"]
-            )
+            arm = books[int(row["book_id"])]
+            daily.setdefault(arm, {})[str(row["date"])] = float(row["net_return"])
+            daily_detail.setdefault(arm, {})[str(row["date"])] = {
+                "gross": float(row["gross_return"]),
+                "turnover": float(row["turnover"]),
+                "cost": float(row["cost_return"]),
+                "cash": float(row["cash_weight"]),
+                "n_equity": int(row["n_equity"]),
+            }
             if row["benchmark_return"] is not None:
                 benchmark[str(row["date"])] = float(row["benchmark_return"])
+        target_cash: dict[str, dict[str, float]] = {}
+        for row in conn.execute(
+            "SELECT b.arm_code, w.date, w.final_target_weight FROM book_weight_daily w "
+            "JOIN strategy_book b ON b.id = w.book_id WHERE w.holding_key = 'CASH' "
+            "ORDER BY w.date"
+        ):
+            target_cash.setdefault(str(row["arm_code"]), {})[str(row["date"])] = float(
+                row["final_target_weight"]
+            )
+        exits = _exit_records(conn, books, params)
         sessions = sorted({day for series in daily.values() for day in series})
         rf, carried = load_rf(conn, str(params["rf_curve"]), sessions)
         payload: dict[str, Any] = {
@@ -159,6 +254,9 @@ def main(db: str, out: str) -> int:
             "summaries": summaries,
             "tests": tests,
             "daily": daily,
+            "daily_detail": daily_detail,
+            "target_cash": target_cash,
+            "exits": exits,
             "rf": rf,
             "benchmark": benchmark,
             "equity": _equity(conn, books),
