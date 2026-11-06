@@ -11345,3 +11345,70 @@ flagged multi-class caps are declared limitations (L-43), not defects of the for
 
 `tests/test_cover_audit.py` (seeding, write-time correction and its log, the shell removal, an unrecorded count left
 alone) and `tests/test_audit_l43_class_rates.py`.
+
+## PIT-RET — the backtest return panel kept only the members as of the window's end (2026-11-06)
+
+**Status**: fixed 2026-11-06 (commit `4b42e59`); used by the fixed templates. The 18-run
+corrective batch kept under `out/pitfix/runs/` is superseded by reviewer A's 2026-11-06 scope
+change (further corrections before any run) and is not interpreted. Reporting only: no
+Shumway sensitivity is applied to any stored run.
+
+**Symptom**: every arm's investable set excluded, ex ante, the names that would leave the index
+before the window ended. On the shipped final copies the names whose stored price series ends
+inside the window and that had **no** `quant_return_daily` row in that window were P1 13/13,
+H1 18/18, P3 10/10, H2 8/8, P2 12/12 and H3 25/25. Some of them had been selected by `cycle`
+and could still never be bought: DISCK (P1); DISH and AAP (H1); PXD (P3); BBWI (H2); CE, BWA and
+HES (P2); nine names in H3 (`out/pitfix/step1_probe.py`, `step1_probe.log`). H1's 18 include
+SIVB, FRC and SBNY. None of these window-leaver pairs was ever held in any arm of the shipped
+run for that window.
+
+**Root cause**: `cycle.backtest` built the panel once per window with
+`quant build-returns --from 2019-01-02 --to <window end>` (`driver.py`), and
+`quant.returns.run_build_returns` selected assets with `quant.db.load_assets(as_of=date_to)`,
+whose `members_asof(date_to)` keeps only the members on the last day. An asset that had already
+left had no series in the window, so the risk model, the optimizer and the engine could not hold
+it even at dates when it was still a member. The defect is the **asset selection**, not the
+point-in-time membership used by `cycle` (PIT `members_asof(t-1)`) or by `MARKOWITZ_BASE`'s
+eligibility.
+
+**Reference**: checklist PER-10 (`docs/checklist_sec/checklist_v1.3.md`; C6 p. 84, C12 p. 1:
+"Back-tested performance reflects application of an index methodology and selection of index
+constituents with the benefit of hindsight"; the sample is "truncated by survivorship"). The
+delisting-return adjustment that remains unapplied is Shumway (1997), Table V, p. 336 (−29.9 %).
+
+**Fix**: `quant.db.load_universe_asset_ids_over_range` / `load_assets_over_range` use
+`kg_schema.queries.members_over_range` — one entry per CIK line whose `valid_from`/`valid_to`
+stint intersects `[from, to]`, so a rename keeps one asset and a leaver is included up to its
+exit. `quant build-returns --pit-members` selects that set; the generic CLI keeps the old
+members-as-of-`--to` default. `cycle.backtest run` passes `--pit-members` by default, and records
+`returns_members` in `params_json`; `--returns-members asof` is the explicit seam for the Step 3
+identity replay only. No membership predicate, score, weight, cost or GUARD value changed.
+
+**Design decisions**: (1) the panel is built once on the base copy over the full tested period
+(`--from 2019-01-02 --to 2026-10-15`), so every window's lookback history is covered; the
+per-window driver build remains idempotent. (2) Reusing the existing `scored_llm.db` copy keeps
+every FUNDAMENTAL row unchanged: the six new templates' `score_snapshot` rows are identical to
+the old templates' on every column except `id`/`computed_at`/`run_id`/`run_kind`. (3) The
+`DividendsNotReady` guard still passes on the production copy: the single
+`backfill-actions` run (`members_over_range`, 2019-01-02…2026-10-23) fetched 591/591 lines with
+`assets_errored = 0`; leavers with no `corporate_action` rows are non-payers / had no split in
+the gateway data, not lines skipped by the selection. (4) The engine's exit rule is unchanged:
+last close, then cash; the stored price series ends at the index exit.
+
+**Verification**: Step 3 identity on the old P1 template (old panel, new code,
+`--returns-members asof`) equals the shipped `final_P1.db` exactly: summaries, tests, weights
+(21,179 rows) and GUARD actions (1,119 rows), max absolute error **0.0**, and the collected JSON
+daily series also equal (`out/pitfix/identity/identity_P1_diff.json`). The new base has **589**
+assets, **1,077,452** `qret-v2` rows (old base: 503 assets, 838,902 rows); the leaver series stop
+at their exits (DISCK 2022-04-08, SIVB 2023-03-09, PXD 2024-05-02, HES 2025-07-17). The six new
+templates' `score_snapshot` rows are identical to the old templates' in every window
+(`out/pitfix/verify_templates.log`). A corrective 18-run batch (FINAL at 10/20 bp and B0, six
+windows, all arms) was completed and kept under `out/pitfix/runs/` with its `run_index.json`;
+reviewer A's 2026-11-06 scope change supersedes those runs before any old-vs-new report, so they
+are preserved but not used for a selection or a report.
+
+**Residual scope**: no Shumway return is applied; the corrective runs above are superseded and
+are not interpreted. No new LLM score was made; the 30-configuration trial set was not re-run,
+so PBO, DSR and White's Reality Check are not recomputed. Leavers whose gateway line has no
+action rows keep a zero dividend for that line; this is the existing data limitation, not a new
+one. The fixed panel still cannot include a line the database never stored (L-42).
