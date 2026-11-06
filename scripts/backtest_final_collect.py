@@ -36,6 +36,7 @@ PARAM_KEYS = (
     "guard_layers",
     "vol_target",
     "filter_series",
+    "filter_frequency",
     "cvar_scenarios",
     "pool_mode",
     "exit_events_path",

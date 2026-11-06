@@ -56,6 +56,7 @@ V2 = {
     "pool_m": "60",
     "core_source": "spy",
     "filter_exit": "0.5",
+    "filter_frequency": "daily",
     "stop_rule": "bp4",
     "satellite_weighting": "minvar",
     "guard_layers": "1,3,4",
@@ -143,7 +144,7 @@ def _job(  # noqa: PLR0913 - the job's fields, all named
     }
 
 
-def jobs_for(  # noqa: C901, PLR0911 - one branch per block
+def jobs_for(  # noqa: C901, PLR0911, PLR0912 - one branch per block
     block: str, out: Path
 ) -> list[dict[str, Any]]:
     if block == "R1":
@@ -266,6 +267,35 @@ def jobs_for(  # noqa: C901, PLR0911 - one branch per block
                 ("MCF", "minvar", "universe"),
             )
         ]
+    if block == "R9":
+        monthly = [
+            _job(
+                "R9",
+                config,
+                window,
+                {
+                    **V2,
+                    "satellite_weighting": method,
+                    "filter_frequency": "monthly",
+                },
+                10.0,
+            )
+            for config, method in (("B5", "mincvar"), ("B0", "minvar"))
+            for window in (*W6, "C1")
+        ]
+        control = _job(
+            "R9",
+            "B5",
+            "P1",
+            {
+                **V2,
+                "satellite_weighting": "mincvar",
+                "filter_frequency": "daily",
+            },
+            10.0,
+        )
+        control["tag"] = "DAILY"
+        return [*monthly, control]
     if block == "L1":
         return [
             _job(
@@ -371,6 +401,8 @@ def _command(window: str, db: Path, job: dict[str, Any]) -> list[str]:
         MARKET,
         "--filter-series",
         str(o.get("filter_series", "tr")),
+        "--filter-frequency",
+        str(o.get("filter_frequency", "daily")),
         "--cvar-scenarios",
         str(o.get("cvar_scenarios", "simple")),
         "--pool-mode",
@@ -390,7 +422,8 @@ def _command(window: str, db: Path, job: dict[str, Any]) -> list[str]:
 
 
 def run_id_of(job: dict[str, Any]) -> str:
-    return f"{job['block']}-{job['config']}-{job['window']}" + (
+    tag = f"-{job['tag']}" if job.get("tag") else ""
+    return f"{job['block']}-{job['config']}-{job['window']}{tag}" + (
         f"-{int(job['cost'])}bp" if job["cost"] != BASE_COST else ""
     )
 
@@ -501,7 +534,7 @@ def main(  # noqa: PLR0915 - one CLI path
     parser.add_argument(
         "--block",
         required=True,
-        choices=("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "L1", "L2", "L3"),
+        choices=("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "L1", "L2", "L3"),
     )
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--workers", type=int, default=4)
@@ -554,6 +587,9 @@ def main(  # noqa: PLR0915 - one CLI path
                 keep = (
                     (job["block"] == "R1" and job["config"] == "B5")
                     or (job["block"] == "R8" and job["config"] == "FINAL")
+                    # F2-1: the monthly FINAL (B5) copies are kept; the B0 and the daily
+                    # control copies are deleted after their JSON is collected.
+                    or (job["block"] == "R9" and job["config"] == "B5" and not job.get("tag"))
                     # L1/L2 keep their copy only until the CVaR diagnostic reads the
                     # per-decision scenario matrices; the diagnostic deletes them.
                     or (job["block"] in {"L1", "L2"} and job["config"] == "FINAL")

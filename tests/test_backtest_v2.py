@@ -7,8 +7,10 @@ of the code under test. Synthetic series only: no real data, no network, no LLM.
 
 from __future__ import annotations
 
+import calendar
 import hashlib
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -132,6 +134,69 @@ def test_the_trend_filter_sma_rule_and_dates_hand_computed() -> None:
         {"date": "d0000", "state": "not_evaluable"},
         {"date": "d0001", "state": "not_evaluable"},
     ]
+
+
+def _monthly_series(months: int, *, last_level: float = 90.0) -> dict[str, float]:
+    """*months* x 21 sessions; earlier month-ends are 100, other days are 50.
+
+    The last month is all *last_level*, so its month-end is *last_level*.  Nine earlier
+    month-ends at 100 make the monthly mean 99 while the daily mean is far lower.
+    """
+    out: dict[str, float] = {}
+    for month in range(months):
+        year = 2020 + month // 12
+        number = 1 + month % 12
+        final_day = calendar.monthrange(year, number)[1]
+        for day in range(final_day - 20, final_day + 1):
+            session = date(year, number, day).isoformat()
+            if month == months - 1:
+                out[session] = last_level
+            elif day == final_day:
+                out[session] = 100.0
+            else:
+                out[session] = 50.0
+    return out
+
+
+def test_the_monthly_filter_disagrees_with_the_daily_filter_on_a_synthetic_series() -> None:
+    close = _monthly_series(10)
+    decision = max(close)
+    # daily: mean of 210 sessions is ~56, latest 90 -> invested; monthly: 90 < 99 -> cash.
+    assert core.trend_trigger(close, decision) is False
+    assert core.trend_trigger(close, decision, frequency="monthly") is True
+    assert core.trend_states(close, [decision], frequency="monthly") == [
+        {"date": decision, "state": "cash"}
+    ]
+
+
+def test_a_month_in_progress_is_not_used_by_the_monthly_filter() -> None:
+    close = _monthly_series(10)
+    # An eleventh, still-in-progress month with a high level: the daily rule sees it, the
+    # monthly rule must stay on the last completed month-end (90 against the 99 mean).
+    for day in range(1, 11):
+        close[date(2020, 11, day).isoformat()] = 200.0
+    mid_month = date(2020, 11, 10).isoformat()
+    assert core.trend_trigger(close, mid_month, frequency="monthly") is True
+    assert core.trend_trigger(close, mid_month) is False
+
+
+def test_fewer_than_ten_month_ends_is_not_evaluable() -> None:
+    close = _monthly_series(9)
+    decision = max(close)
+    assert core.trend_trigger(close, decision, frequency="monthly") is None
+    assert core.trend_states(close, [decision], frequency="monthly") == [
+        {"date": decision, "state": "not_evaluable"}
+    ]
+
+
+def test_the_default_filter_frequency_is_daily() -> None:
+    close = _monthly_series(10)
+    decision = max(close)
+    assert core.trend_trigger(close, decision) == core.trend_trigger(
+        close, decision, frequency="daily"
+    )
+    with pytest.raises(ValueError):
+        core.trend_trigger(close, decision, frequency="weekly")
 
 
 def test_the_filter_and_the_core_never_touch_the_base_book() -> None:

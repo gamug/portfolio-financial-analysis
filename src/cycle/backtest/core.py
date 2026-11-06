@@ -11,11 +11,13 @@ ever reported: no price or return value is written to a committed file.
 
 from __future__ import annotations
 
+import calendar
 import hashlib
 import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Final
 
@@ -23,6 +25,10 @@ from typing import Final
 CORE_TICKER: Final = "SPY"
 #: Faber's rule: the close against the mean of the last 210 session closes (10 months x 21).
 TREND_WINDOW: Final = 210
+#: F2-1: the monthly rule compares the latest completed month-end with the mean of the last
+#: 10 month-end total-return levels.
+MONTHLY_WINDOW: Final = 10
+FILTER_FREQUENCIES: Final = ("daily", "monthly")
 FILTER_OFF: Final = "off"
 FILTER_ON: Final = "on"
 FILTERS: Final = (FILTER_OFF, FILTER_ON)
@@ -152,19 +158,71 @@ def total_return_index(total_return: Mapping[str, float]) -> dict[str, float]:
     return out
 
 
+def month_end_sessions(close: Mapping[str, float]) -> list[str]:
+    """The last session of each completed calendar month present in *close*, ascending.
+
+    A month still in progress has no month-end session, so it is never returned.  A month is
+    complete when a later month is present in the index; the final month is included only when
+    its last session reaches the month's last weekday (so an index ending mid-month never
+    contributes a partial month).  Dates are ISO ``YYYY-MM-DD`` strings, as in the collector
+    and the SPY file.
+    """
+    last: dict[str, str] = {}
+    for day in sorted(close):
+        last[day[:7]] = day
+    months = sorted(last)
+    out: list[str] = []
+    for index, month in enumerate(months):
+        day = last[month]
+        if index < len(months) - 1:
+            out.append(day)
+            continue
+        year, number = (int(part) for part in month.split("-"))
+        final_day = calendar.monthrange(year, number)[1]
+        last_weekday = max(
+            candidate
+            for candidate in range(1, final_day + 1)
+            if date(year, number, candidate).weekday() < calendar.SATURDAY
+        )
+        if int(day[-2:]) >= last_weekday:
+            out.append(day)
+    return out
+
+
 def trend_trigger(
-    close: Mapping[str, float], decision: str, *, window: int = TREND_WINDOW
+    close: Mapping[str, float],
+    decision: str,
+    *,
+    window: int = TREND_WINDOW,
+    frequency: str = "daily",
 ) -> bool | None:
     """Whether the trend filter sends the book to cash at *decision* (V2_PLAN §2c).
 
-    ``True`` = the close at *decision* is **below** the simple mean of the last *window*
-    session closes ending there (filter triggered, target 100% cash); ``False`` = at or above;
-    ``None`` = fewer than *window* sessions are available, so the filter is not evaluable and
-    stays off (the caller records it). The read is causal: only sessions ``<= decision`` enter.
-    A decision date missing from *close* is a data gap and raises, never "off".
+    ``True`` = the latest signal is **below** its simple mean (filter triggered, target 100%
+    cash); ``False`` = at or above; ``None`` = fewer than *window* observations are available,
+    so the filter is not evaluable and stays off (the caller records it).  The read is causal:
+    only sessions ``<= decision`` enter.  A decision date missing from *close* is a data gap
+    and raises, never "off".
+
+    ``frequency="daily"`` is Faber's 210-session close rule.  ``frequency="monthly"`` reads
+    only completed month-end sessions: the latest month-end ``m <= decision`` against the mean
+    of the last 10 month-end total-return levels ending at ``m``.  A decision date that is not
+    itself a month-end therefore uses the previous month-end; the month still in progress is
+    never used.
     """
+    if frequency not in FILTER_FREQUENCIES:
+        raise ValueError(
+            f"unknown filter_frequency {frequency!r}: expected one of {FILTER_FREQUENCIES}"
+        )
     if decision not in close:
         raise CoreSeriesError(f"core series has no close at decision date {decision}")
+    if frequency == "monthly":
+        month_ends = [day for day in month_end_sessions(close) if day <= decision]
+        if len(month_ends) < MONTHLY_WINDOW:
+            return None
+        latest = month_ends[-1]
+        mean = math.fsum(close[day] for day in month_ends[-MONTHLY_WINDOW:]) / MONTHLY_WINDOW
+        return close[latest] < mean
     sessions = sorted(day for day in close if day <= decision)
     if len(sessions) < window:
         return None
@@ -173,12 +231,16 @@ def trend_trigger(
 
 
 def trend_states(
-    close: Mapping[str, float], decisions: Sequence[str], *, window: int = TREND_WINDOW
+    close: Mapping[str, float],
+    decisions: Sequence[str],
+    *,
+    window: int = TREND_WINDOW,
+    frequency: str = "daily",
 ) -> list[dict[str, str]]:
     """One record per decision date: ``cash`` (triggered), ``invested``, or ``not_evaluable``."""
     out: list[dict[str, str]] = []
     for decision in decisions:
-        trigger = trend_trigger(close, decision, window=window)
+        trigger = trend_trigger(close, decision, window=window, frequency=frequency)
         state = "not_evaluable" if trigger is None else ("cash" if trigger else "invested")
         out.append({"date": decision, "state": state})
     return out
@@ -247,6 +309,7 @@ def config_targets(  # noqa: PLR0913 - the configuration's inputs, all named
     decision: str,
     core_source: str = "spy",
     filter_exit: float = 1.0,
+    filter_frequency: str = "daily",
 ) -> ConfigTargets:
     """The base and Top-N targets at *decision* under the configuration's core and filter.
 
@@ -272,7 +335,7 @@ def config_targets(  # noqa: PLR0913 - the configuration's inputs, all named
         topn = dict(satellite)
     state: str | None = None
     if trend_filter == FILTER_ON:
-        trigger = trend_trigger(close or {}, decision)
+        trigger = trend_trigger(close or {}, decision, frequency=filter_frequency)
         state = "not_evaluable" if trigger is None else ("cash" if trigger else "invested")
         if trigger:
             if filter_exit >= 1.0:

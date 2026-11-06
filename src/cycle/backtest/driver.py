@@ -768,6 +768,7 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
     pool_m: int = 30,
     core_source: str = "spy",
     filter_exit: float = 1.0,
+    filter_frequency: str = "daily",
     satellite_weighting: str = "minvar",
     cvar_scenarios: str = "simple",
     pool_mode: str = "cycle",
@@ -960,6 +961,7 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
             decision=decision,
             core_source=core_source,
             filter_exit=filter_exit,
+            filter_frequency=filter_frequency,
         )
         if config.trend_state is not None:
             trend_records.append({"date": decision, "state": config.trend_state})
@@ -1019,6 +1021,7 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
     pool_m: int = 30,
     core_source: str = "spy",
     filter_exit: float = 1.0,
+    filter_frequency: str = "daily",
     stop_rule: str = "kl",
     satellite_weighting: str = "minvar",
     guard_layers: Sequence[int] | None = None,
@@ -1041,6 +1044,7 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
         "pool_m": pool_m,
         "core_source": core_source,
         "filter_exit": filter_exit,
+        "filter_frequency": filter_frequency,
         "stop_rule": stop_rule,
         "satellite_weighting": satellite_weighting,
         "guard_layers": None if guard_layers is None else sorted(guard_layers),
@@ -1838,6 +1842,7 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     pool_m: int | None = None,
     core_source: str = "spy",
     filter_exit: float = 1.0,
+    filter_frequency: str = "daily",
     stop_rule: str = "kl",
     satellite_weighting: str = "minvar",
     guard_layers: Sequence[int] | None = None,
@@ -1899,6 +1904,10 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
         raise BacktestError(f"returns_members must be 'asof' or 'range', got {returns_members!r}")
     if filter_series not in v2core.FILTER_SERIES:
         raise BacktestError(f"filter_series must be 'tr' or 'price', got {filter_series!r}")
+    if filter_frequency not in v2core.FILTER_FREQUENCIES:
+        raise BacktestError(
+            f"filter_frequency must be 'daily' or 'monthly', got {filter_frequency!r}"
+        )
     if cvar_scenarios not in ("simple", "log"):
         raise BacktestError(f"cvar_scenarios must be 'simple' or 'log', got {cvar_scenarios!r}")
     if pool_mode not in ("cycle", "universe"):
@@ -1984,6 +1993,7 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
             pool_m=pool_m,
             core_source=core_source,
             filter_exit=filter_exit,
+            filter_frequency=filter_frequency,
             stop_rule=stop_rule,
             satellite_weighting=satellite_weighting,
             guard_layers=None if effective_layers is None else sorted(effective_layers),
@@ -2067,6 +2077,7 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
                 pool_m=pool_m,
                 core_source=core_source,
                 filter_exit=filter_exit,
+                filter_frequency=filter_frequency,
                 satellite_weighting=satellite_weighting,
                 cvar_scenarios=cvar_scenarios,
                 pool_mode=pool_mode,
@@ -2352,6 +2363,13 @@ def build_parser() -> argparse.ArgumentParser:
         "total-return index, Faber 2013) or price (the split-adjusted close, ladder only)",
     )
     run.add_argument(
+        "--filter-frequency",
+        default="daily",
+        choices=list(v2core.FILTER_FREQUENCIES),
+        help="F2-1: daily is Faber's 210-session rule; monthly reads completed month-ends "
+        "(latest month-end vs the mean of the last 10 month-end levels)",
+    )
+    run.add_argument(
         "--core-series",
         default=None,
         help="the verified SPY file (with manifest.json beside it); required when needed",
@@ -2552,6 +2570,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             pool_m=args.pool_m,
             core_source=args.core_source,
             filter_exit=args.filter_exit,
+            filter_frequency=args.filter_frequency,
             stop_rule=args.stop_rule,
             satellite_weighting=args.satellite_weighting,
             guard_layers=None
