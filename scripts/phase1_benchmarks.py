@@ -257,23 +257,26 @@ def main(argv: list[str] | None = None) -> int:
                 if not name.startswith("_")
             },
         }
-    final_c1 = _load(out / "runs" / "R8-FINAL-C1.json")
-    b0_c1 = _load(out / "runs" / "R8-B0-C1.json")
-    rf = _series(final_c1["rf"])
-    series = _window(final_c1, b0_c1, spy, rf)
-    result["C1"] = {
-        "metrics": {
-            name: _metrics(values, rf)
-            for name, values in series.items()
-            if not name.startswith("_")
-        },
-        "vol_capped_sessions": series["_vol_capped_sessions"]["n"],
-        "series": {
-            name: {day: value for day, value in values.items()}
-            for name, values in series.items()
-            if not name.startswith("_")
-        },
-    }
+    c1_final = out / "runs" / "R8-FINAL-C1.json"
+    c1_b0 = out / "runs" / "R8-B0-C1.json"
+    if c1_final.is_file() and c1_b0.is_file():
+        final_c1 = _load(c1_final)
+        b0_c1 = _load(c1_b0)
+        rf = _series(final_c1["rf"])
+        series = _window(final_c1, b0_c1, spy, rf)
+        result["C1"] = {
+            "metrics": {
+                name: _metrics(values, rf)
+                for name, values in series.items()
+                if not name.startswith("_")
+            },
+            "vol_capped_sessions": series["_vol_capped_sessions"]["n"],
+            "series": {
+                name: {day: value for day, value in values.items()}
+                for name, values in series.items()
+                if not name.startswith("_")
+            },
+        }
     (out / "benchmarks.json").write_text(json.dumps(result, indent=1) + "\n")
     print(json.dumps({window: result[window]["metrics"] for window in result}))
     return 0

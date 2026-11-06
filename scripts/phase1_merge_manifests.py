@@ -42,7 +42,7 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def main(  # noqa: C901 - one merge path
+def main(  # noqa: C901, PLR0912 - one merge path
     argv: list[str] | None = None,
 ) -> int:
     parser = argparse.ArgumentParser()
@@ -64,6 +64,37 @@ def main(  # noqa: C901 - one merge path
         if json_path.is_file():
             row["exit"] = "0"
             row["output_sha256"] = _sha256(json_path)
+    # Any collector JSON without a manifest row (a block killed before its writer flushed,
+    # or a resumed block) is added from the JSON's own params; the sha is recomputed.
+    for json_path in sorted((out / "runs").glob("*.json")):
+        run_id = json_path.stem
+        if run_id in rows:
+            continue
+        payload = json.loads(json_path.read_text())
+        parts = run_id.split("-")
+        block, config, window = parts[0], parts[1], parts[2]
+        cost = float(payload["params"].get("cost_bps", 10.0))
+        rows[run_id] = {
+            "run_id": run_id,
+            "block": block,
+            "config": config,
+            "window": window,
+            "cost_bps": str(cost),
+            "params_sha256": _sha256(
+                Path(__file__).resolve().parents[1] / "src/cycle/backtest/params.frozen.toml"
+            ),
+            "template_sha256": _sha256(
+                Path("/workspaces/thesis/scratch/final/out/pitfix/templates")
+                / ("template_C1_pitfix.db" if window == "C1" else f"template_{window}_pitfix.db")
+            ),
+            "output_sha256": _sha256(json_path),
+            "exit": "0",
+            "seconds": "",
+            "diagnostic_only": str(run_id.endswith("R2-Z2-P1") or "-Z2-" in run_id).lower(),
+            "output_json": str(json_path),
+            "log": "",
+            "db_kept": "",
+        }
     target = out / "runs_manifest.csv"
     with target.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDS, extrasaction="ignore")

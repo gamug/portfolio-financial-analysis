@@ -389,13 +389,17 @@ def _command(window: str, db: Path, job: dict[str, Any]) -> list[str]:
     return command
 
 
+def run_id_of(job: dict[str, Any]) -> str:
+    return f"{job['block']}-{job['config']}-{job['window']}" + (
+        f"-{int(job['cost'])}bp" if job["cost"] != BASE_COST else ""
+    )
+
+
 def run_one(job: dict[str, Any], out: Path, keep_db: bool) -> dict[str, Any]:
     block = job["block"]
     config = job["config"]
     window = job["window"]
-    run_id = f"{block}-{config}-{window}" + (
-        f"-{int(job['cost'])}bp" if job["cost"] != BASE_COST else ""
-    )
+    run_id = run_id_of(job)
     runs = out / "runs"
     logs = out / "logs"
     dbs = out / "dbs"
@@ -412,7 +416,16 @@ def run_one(job: dict[str, Any], out: Path, keep_db: bool) -> dict[str, Any]:
     work = dbs / f"{run_id}.db"
     if work.exists():
         raise SystemExit(f"{work} already exists: refusing to reuse a copy")
-    shutil.copyfile(template, work)
+    # A reflink copy is O(1) on this filesystem (2.4 s vs ~60 s for 3 GB); the fallback is
+    # the ordinary copy when the filesystem cannot reflink.
+    copied = subprocess.run(  # noqa: S603 - fixed argv, internal paths
+        ["/bin/cp", "--reflink=auto", str(template), str(work)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if copied.returncode != 0:
+        shutil.copyfile(template, work)
     work.chmod(0o644)
     log = logs / f"{run_id}.log"
     command = _command(window, work, job)
@@ -481,7 +494,9 @@ def run_one(job: dict[str, Any], out: Path, keep_db: bool) -> dict[str, Any]:
     return row
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(  # noqa: PLR0915 - one CLI path
+    argv: list[str] | None = None,
+) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--block",
@@ -505,6 +520,8 @@ def main(argv: list[str] | None = None) -> int:
         jobs = [job for job in jobs if job["window"] in wanted]
     if args.limit:
         jobs = jobs[: args.limit]
+    # Resume: a run whose JSON already exists was collected and is never overwritten.
+    jobs = [job for job in jobs if not (out / "runs" / f"{run_id_of(job)}.json").is_file()]
     print(json.dumps({"block": args.block, "jobs": len(jobs), "workers": args.workers}))
 
     manifest = out / f"runs_manifest_{args.block}.csv"

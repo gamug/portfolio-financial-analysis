@@ -236,43 +236,53 @@ def _sharpe_vector(returns: np.ndarray) -> float:
 
 
 def pbo_cscv(matrix: np.ndarray, metric: str = "sharpe", s_blocks: int = 16) -> dict[str, Any]:
-    """Bailey et al. CSCV: all C(S, S/2) splits, IS-best's OOS rank."""
+    """Bailey et al. CSCV: all C(S, S/2) splits, the IS-best config's OOS rank.
+
+    Each half is the **concatenation** of its blocks (one series per config), so the metric is
+    the Sharpe / Calmar of the half, not an average of block metrics.  The rank counts the
+    configs whose OOS metric is at or below the IS-best's (1 = worst)."""
     n_obs, n_configs = matrix.shape
     if s_blocks % 2:
         raise SystemExit("PBO needs an even block count")
     edges = np.linspace(0, n_obs, s_blocks + 1, dtype=int)
     blocks = [matrix[edges[i] : edges[i + 1]] for i in range(s_blocks)]
-    # per-block, per-config metric
-    per_block = np.empty((s_blocks, n_configs))
-    for b, block in enumerate(blocks):
-        for c in range(n_configs):
-            values = block[:, c]
-            if metric == "sharpe":
-                per_block[b, c] = _sharpe_vector(values) if np.std(values) > 0 else 0.0
-            else:
-                per_block[b, c] = -_max_drawdown(values)
-    logits = []
-    is_best_sharpe = []
-    oos_best_sharpe = []
     half = s_blocks // 2
+    logits: list[float] = []
+    is_best: list[float] = []
+    oos_best: list[float] = []
     for chosen in itertools.combinations(range(s_blocks), half):
         other = [b for b in range(s_blocks) if b not in chosen]
-        is_score = per_block[list(chosen)].mean(axis=0)
-        oos_score = per_block[other].mean(axis=0)
+        is_matrix = np.concatenate([blocks[b] for b in chosen], axis=0)
+        oos_matrix = np.concatenate([blocks[b] for b in other], axis=0)
+        if metric == "sharpe":
+            is_score = _sharpe_columns(is_matrix)
+            oos_score = _sharpe_columns(oos_matrix)
+        else:
+            is_score = np.asarray([-_max_drawdown(is_matrix[:, c]) for c in range(n_configs)])
+            oos_score = np.asarray([-_max_drawdown(oos_matrix[:, c]) for c in range(n_configs)])
         best = int(np.argmax(is_score))
         rank = int(np.sum(oos_score <= oos_score[best]))
         omega = (rank + 0.5) / (n_configs + 1)
         logits.append(math.log(omega / (1.0 - omega)))
-        is_best_sharpe.append(is_score[best])
-        oos_best_sharpe.append(oos_score[best])
+        is_best.append(float(is_score[best]))
+        oos_best.append(float(oos_score[best]))
     return {
         "metric": metric,
         "blocks": s_blocks,
         "splits": len(logits),
         "pbo": float(np.mean(np.asarray(logits) <= 0.0)),
-        "mean_is_best": float(np.mean(is_best_sharpe)),
-        "mean_oos_best": float(np.mean(oos_best_sharpe)),
+        "mean_is_best": float(np.mean(is_best)),
+        "mean_oos_best": float(np.mean(oos_best)),
     }
+
+
+def _sharpe_columns(matrix: np.ndarray) -> np.ndarray:
+    means = matrix.mean(axis=0)
+    stds = matrix.std(axis=0, ddof=1)
+    out = np.zeros(matrix.shape[1])
+    good = stds > 0
+    out[good] = means[good] / stds[good] * math.sqrt(PERIODS)
+    return out
 
 
 def deflated_sharpe(
@@ -444,7 +454,7 @@ def white_reality_check(
             count += 1
     return {
         "best": best,
-        "mean_differential_annual": float(means[best] * PERIODS),
+        "mean_differential_annual": float(means[best] * PERIODS * 100.0),
         "p_value": (count + 1) / (n_boot + 1),
         "mean_block": mean_block,
     }
@@ -524,7 +534,9 @@ def main(argv: list[str] | None = None) -> int:
         for window in WINDOWS
     }
     sharpes = np.asarray([_sharpe_vector(matrix[:, i]) for i in range(matrix.shape[1])])
-    trial_variance = float(np.var(sharpes, ddof=1))
+    # The DSR / E[max] algebra is in daily Sharpe units; the family table reports annualised.
+    sharpes_daily = sharpes / math.sqrt(PERIODS)
+    trial_variance = float(np.var(sharpes_daily, ddof=1))
     payload["family"] = {
         "configurations": names,
         "n": len(names),
@@ -533,8 +545,8 @@ def main(argv: list[str] | None = None) -> int:
         "trial_variance_daily": trial_variance,
         "effective_trials": effective_trials(series),
         "dsr": {
-            "N30": deflated_sharpe(matrix[:, names.index("R1-B5")], len(names), sharpes),
-            "N55": deflated_sharpe(matrix[:, names.index("R1-B5")], 55, sharpes),
+            "N30": deflated_sharpe(matrix[:, names.index("R1-B5")], len(names), sharpes_daily),
+            "N55": deflated_sharpe(matrix[:, names.index("R1-B5")], 55, sharpes_daily),
         },
         "expected_max": {
             "N30": expected_max(len(names), trial_variance),

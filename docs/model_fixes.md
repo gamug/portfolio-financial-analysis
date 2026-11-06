@@ -11451,8 +11451,11 @@ seven ticker-only changes are `other` rows with no asset; they are not exits.
 
 **Verification**: `tests/test_backtest_exits.py` (table validation, the four standard bases,
 the zero-cost −1.0 check, the residual identity, frozen positions, the recovery distribution
-date, the forced exit); the classification and the sources are in the table itself. The
-measured per-arm exits are in the Phase-1 REPORT.
+date, the forced exit); the classification and the sources are in the table itself. On the 327
+Phase-1 runs, 9 distinct tickers were held through an exit (ATVI, CERN, CTXS, JNPR, K, HOLX,
+CTRA, EA, MKTX); the three failures (SIVB, SBNY, FRC) were **never held** (SIVB ranked
+477–490 and was not selected; SBNY and FRC were vetoed `UNSCORED` on every H1 decision), so
+the 0 / −1.0 sensitivity changes no reported metric. Full per-arm rows in the Phase-1 REPORT.
 
 ## CVAR-SIMPLE — the min-CVaR LP read log returns as if they were simple (2026-11-06)
 
@@ -11470,7 +11473,9 @@ CVaR95 difference on the 61 FINAL decisions are in the REPORT.
 
 **Verification**: `tests/test_quant_weighting.py::test_simple_return_scenarios_change_the_min_cvar_solution`
 (a synthetic crash scenario where the two solutions differ, and the direction the algebra
-predicts); the Phase-1 R1 vs L1/L2 ladder measures it on the corrected panel.
+predicts). On the 61 FINAL decisions the log and simple solutions differ by at most
+**0.0390** in one weight, and the CVaR95 difference is at most **0.0863 pp**
+(`/workspaces/thesis/scratch/final/out/phase1/cvar_diag.json`).
 
 ## FILTER-TR — the 210-session filter read the price series, not total return (2026-11-06)
 
@@ -11480,9 +11485,10 @@ index to `trend_trigger` when `--filter-series tr` (the default). `--filter-seri
 keeps the split-adjusted close for the correction ladder. The 210-session window and the
 decision-date evaluation are unchanged.
 
-**Reference**: Faber (2013, p. 15) computes the signal on total-return series. The measured
-effect on the 61 FINAL decision dates is in the REPORT; the two dates reviewer A named
-(2023-01-12 and 2026-03-25, cash → invested) are checked there.
+**Reference**: Faber (2013, p. 15) computes the signal on total-return series. On the 61 FINAL
+decision dates the price and total-return inputs differ at exactly **2023-01-12** and
+**2026-03-25**, both cash → invested (confirmed on the stored `spy_tr.json`); no other date
+changes. The full-period effect is in the REPORT's correction ladder.
 
 **Verification**: `tests/test_backtest_v2.py` (the TR index compounding and a synthetic price
 fall / TR rise where the two inputs disagree); the driver records `filter_series` in

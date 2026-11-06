@@ -30,9 +30,6 @@ def _numbers(payload: dict[str, Any]) -> dict[tuple[str, str], dict[str, float]]
                 "max_drawdown": float(row["max_drawdown"]),
                 "cumulative_return": float(row["cumulative_return"]),
             }
-    missing = {(s, a) for s in SEGMENTS for a in ARMS} - set(out)
-    if missing:
-        raise SystemExit(f"missing design numbers: {sorted(missing)}")
     return out
 
 
@@ -53,6 +50,9 @@ def main(argv: list[str] | None = None) -> int:
                 per.update(_numbers(json.loads(path.read_text())))
             mdd = [per[key]["max_drawdown"] for key in per]
             cum = [per[key]["cumulative_return"] for key in per]
+            missing = {(segment, arm) for segment in SEGMENTS for arm in ARMS} - set(per)
+            if missing:
+                raise SystemExit(f"missing design numbers for {config}: {sorted(missing)}")
             rows.append(
                 {
                     "blend": blend,

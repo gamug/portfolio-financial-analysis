@@ -124,6 +124,8 @@ def _stage(out: Path) -> dict[str, Any]:
 
 
 def _champion(out: Path) -> dict[str, Any]:
+    if not (out / "champion_selection_phase1.json").is_file():
+        return {"selected": None, "configs": {}, "not_run": True}
     selection = json.loads((out / "champion_selection_phase1.json").read_text())
     selected = f"{selection['selected']['blend']}{selection['selected']['tilt']}"
     configs = [("B0T0", "B0T0")]

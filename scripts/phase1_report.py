@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import sqlite3
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,7 @@ from phase1_stats import (
     arm_daily,
     block_mdd_diff,
     concatenate,
+    hac_mean_ci,
     load_run,
     metrics,
     stationary_mdd_diff,
@@ -29,6 +32,7 @@ from phase1_stats import (
 OLD = Path("/workspaces/thesis/scratch/final/out/final_round/runs")
 R_THRESHOLD = 0.8446
 MDD_THRESHOLD = 0.0831
+EXIT_EPS = 1e-9
 SPY_FILE = Path("/workspaces/thesis/scratch/final/data/spy/spy_tr.json")
 FINAL = "R1-B5"
 B0 = "R1-B0"
@@ -105,11 +109,11 @@ def _series_table(  # noqa: PLR0913 - the table's columns, all named
     }
     if old_id is not None:
         old_parts = {
-            w: arm_daily(json.loads((OLD / f"{old_id}-{w}.json").read_text()), arm) for w in WINDOWS
+            w: arm_daily(json.loads((OLD / f"{old_id}_{w}.json").read_text()), arm) for w in WINDOWS
         }
         old_concat = _concat(old_parts)
         old_rf = concatenate(
-            [json.loads((OLD / f"{old_id}-{w}.json").read_text())["rf"] for w in WINDOWS]
+            [json.loads((OLD / f"{old_id}_{w}.json").read_text())["rf"] for w in WINDOWS]
         )
         item["old"] = metrics(old_concat, old_rf)
     return item
@@ -118,6 +122,22 @@ def _series_table(  # noqa: PLR0913 - the table's columns, all named
 def _load_benchmark(out: Path, window: str, name: str) -> dict[str, float]:
     data = json.loads((out / "benchmarks.json").read_text())
     return {day: float(value) for day, value in data[window]["series"][name].items()}
+
+
+def _hac_diff(a: dict[str, float], b: dict[str, float]) -> dict[str, float]:
+    days = sorted(set(a) & set(b))
+    diff = np.asarray([a[day] - b[day] for day in days])
+    mean = float(diff.mean())
+    n = len(diff)
+    lags = int(np.floor(4.0 * (n / 100.0) ** (2.0 / 9.0)))
+    z = diff - mean
+    var = float(np.dot(z, z) / n)
+    for lag in range(1, lags + 1):
+        weight = 1.0 - lag / (lags + 1.0)
+        var += 2.0 * weight * float(np.dot(z[lag:], z[:-lag]) / n)
+    se = (var / n) ** 0.5
+    p = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(abs(mean / se) / math.sqrt(2.0)))) if se > 0 else 1.0
+    return {"mean_annual_pp": mean * 252 * 100.0, "t": mean / se if se > 0 else 0.0, "p": p, "n": n}
 
 
 def _load_stats(out: Path) -> dict[str, Any]:
@@ -129,6 +149,8 @@ def _exits_table(out: Path) -> list[dict[str, Any]]:
     for path in sorted((out / "runs").glob("*.json")):
         payload = json.loads(path.read_text())
         for row in payload.get("exits", []):
+            if float(row.get("residual_weight", 0.0)) <= EXIT_EPS:
+                continue
             records.append(
                 {
                     "run": path.stem,
@@ -140,7 +162,7 @@ def _exits_table(out: Path) -> list[dict[str, Any]]:
 
 
 def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per block
-    stats = _load_stats(out)
+    stats = _load_stats(out) if (out / "stats.json").is_file() else {}
     spy = _spy_returns()
     horizons: dict[str, Any] = {}
     for name, run_id, arm in (
@@ -245,6 +267,67 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
             rows,
         )
     )
+
+    # B5's differences against the other series, old and corrected.
+    def _old_series(old_id: str, arm: str) -> dict[str, float]:
+        parts = []
+        for window in WINDOWS:
+            payload = json.loads((OLD / f"{old_id}_{window}.json").read_text())
+            parts.append(arm_daily(payload, arm))
+        return concatenate(parts)
+
+    old_rf = concatenate([json.loads((OLD / f"FINAL_{w}.json").read_text())["rf"] for w in WINDOWS])
+    old_final_concat = _old_series("FINAL", "TOPN_MV_GUARD_NO_NLP")
+    old_mb_concat = _old_series("FINAL", "MARKOWITZ_BASE")
+    old_ew_concat = concatenate(
+        [
+            {
+                day: float(v)
+                for day, v in json.loads((OLD / f"FINAL_{w}.json").read_text())["benchmark"].items()
+            }
+            for w in WINDOWS
+        ]
+    )
+    old_spy_parts = {
+        w: {
+            day: spy[day]
+            for day in json.loads((OLD / f"FINAL_{w}.json").read_text())["daily"][
+                "TOPN_MV_GUARD_NO_NLP"
+            ]
+            if day in spy
+        }
+        for w in WINDOWS
+    }
+    old_spy_concat = _concat(old_spy_parts)
+    old_metrics = {
+        "Y2 (=B0)": metrics(_old_series("B0", "TOPN_MV_GUARD_NO_NLP"), old_rf),
+        "MARKOWITZ_BASE": metrics(old_mb_concat, old_rf),
+        "SPY": metrics(old_spy_concat, old_rf),
+        "SP500_EW": metrics(old_ew_concat, old_rf),
+    }
+    new_metrics = {
+        "Y2 (=B0)": horizons["B0"]["corrected"],
+        "MARKOWITZ_BASE": horizons["MARKOWITZ_BASE"]["corrected"],
+        "SPY": horizons["SPY"]["corrected"],
+        "SP500_EW": horizons["SP500_EW"]["corrected"],
+    }
+    old_base = metrics(old_final_concat, old_rf)["cumulative_return"]
+    new_base = horizons["FINAL"]["corrected"]["cumulative_return"]
+    diff_rows = []
+    for label in ("Y2 (=B0)", "MARKOWITZ_BASE", "SPY", "SP500_EW"):
+        old_delta = old_base - old_metrics[label]["cumulative_return"]
+        new_delta = new_base - new_metrics[label]["cumulative_return"]
+        diff_rows.append(
+            [
+                f"FINAL - {label}",
+                f"{100 * old_delta:+.2f} pp",
+                f"{100 * new_delta:+.2f} pp",
+                f"{100 * (new_delta - old_delta):+.2f} pp",
+            ]
+        )
+    lines.append("")
+    lines.append(_table(["comparison", "old", "corrected", "change"], diff_rows))
+
     # CHAMPION design set and holdout, old vs corrected.
     old_selection = json.loads(
         Path("/workspaces/thesis/scratch/final/out/champion/selection.json").read_text()
@@ -252,23 +335,45 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
     old_holdout = json.loads(
         Path("/workspaces/thesis/scratch/final/out/champion/holdout.json").read_text()
     )
-    new_selection = json.loads((out / "champion_selection_phase1.json").read_text())
-    new_holdout = json.loads((out / "selection_phase1.json").read_text())["champion"]
+    new_selection = (
+        json.loads((out / "champion_selection_phase1.json").read_text())
+        if (out / "champion_selection_phase1.json").is_file()
+        else None
+    )
+    new_holdout = (
+        json.loads((out / "selection_phase1.json").read_text())["champion"]
+        if (out / "selection_phase1.json").is_file()
+        else None
+    )
     old_c = f"{old_selection['selected']['blend']}·{old_selection['selected']['tilt']}"
-    new_c = f"{new_selection['selected']['blend']}·{new_selection['selected']['tilt']}"
+    new_c = (
+        f"{new_selection['selected']['blend']}·{new_selection['selected']['tilt']}"
+        if new_selection
+        else "not run"
+    )
+    new_key = (
+        f"{new_selection['selected']['blend']}{new_selection['selected']['tilt']}"
+        if new_selection
+        else None
+    )
     champ_rows = [
         ["design-set C*", old_c, new_c, "selection re-applied"],
         [
             "design mean MDD",
             _num(old_selection["rows"][0]["mean_mdd"], 4),
-            _num(new_selection["rows"][0]["mean_mdd"], 4),
-            _num(new_selection["rows"][0]["mean_mdd"] - old_selection["rows"][0]["mean_mdd"], 4),
+            _num(new_selection["rows"][0]["mean_mdd"], 4) if new_selection else "not run",
+            _num(new_selection["rows"][0]["mean_mdd"] - old_selection["rows"][0]["mean_mdd"], 4)
+            if new_selection
+            else "—",
         ],
     ]
     for window in ("H1", "H2", "H3"):
         old_arm = old_holdout["windows"][window]["arms"]["TOPN_MV_GUARD_NO_NLP"]
         old_mdd = float(old_arm["chosen"]["max_drawdown"])
-        new_mdd = float(new_holdout["configs"][new_c][window]["guard"]["max_drawdown"])
+        if new_holdout is None or new_key not in new_holdout["configs"]:
+            champ_rows.append([f"{window} GUARD MDD", _num(old_mdd), "not run", "-"])
+            continue
+        new_mdd = float(new_holdout["configs"][new_key][window]["guard"]["max_drawdown"])
         champ_rows.append(
             [f"{window} GUARD MDD", _num(old_mdd), _num(new_mdd), _num(new_mdd - old_mdd)]
         )
@@ -296,7 +401,7 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         if run_id is None:
             item = old_final["old"] if label == "old" else old_b0["old"]
         else:
-            arm = "TOPN_MV_NOGUARD" if run_id.startswith("L3") else "TOPN_MV_GUARD_NO_NLP"
+            arm = "TOPN_MV_GUARD_NO_NLP"
             per = _per_window(out, run_id, arm)
             item = metrics(_concat(per), _rf_concat(out, run_id))
         ladder_rows.append(
@@ -408,7 +513,8 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         )
     lines.append(
         "Columns: mean R over the six windows (first object), then the concatenated series "
-        "(second object). The continuous C1 object is in §5.2.\n"
+        "(second object). The continuous C1 object is in §5.2. The first object's R is the "
+        "mean of the six per-window cumulative returns, not a compounded series.\n"
     )
     lines.append(
         _table(
@@ -416,18 +522,41 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
             rows,
         )
     )
+    ci_rows = []
+    for name in ("FINAL", "FINAL NOGUARD", "B0", "MARKOWITZ_BASE", "MCF", "SPY", "BMK_EXPO_GUARD"):
+        ci = hac_mean_ci(horizons[name]["concat"], level=0.90)
+        ci_rows.append(
+            [
+                name,
+                f"{100 * 252 * ci['mean']:+.2f}",
+                f"{100 * 252 * ci['low']:+.2f}",
+                f"{100 * 252 * ci['high']:+.2f}",
+                str(len(horizons[name]["concat"])),
+            ]
+        )
+    lines.append("")
+    lines.append(
+        "HAC 90% confidence interval of the mean daily net return, annualised (pp/yr), "
+        "concatenated series:"
+    )
+    lines.append(_table(["series", "mean", "low", "high", "n"], ci_rows))
     lines.append("")
 
     # 5.2 C1
     lines.append("### 5.2 Continuous window C1\n")
     c1_rows = []
+    c1_available = (out / "runs" / "R8-FINAL-C1.json").is_file()
     for label, run_id, arm in (
-        ("C1 FINAL", "R8-FINAL-C1", "TOPN_MV_GUARD_NO_NLP"),
-        ("C1 FINAL NOGUARD", "R8-FINAL-C1", "TOPN_MV_NOGUARD"),
-        ("C1 B0", "R8-B0-C1", "TOPN_MV_GUARD_NO_NLP"),
-        ("C1 B0 NOGUARD", "R8-B0-C1", "TOPN_MV_NOGUARD"),
-        ("C1 MCF", "R8-MCF-C1", "TOPN_MV_GUARD_NO_NLP"),
-        ("C1 MCF NOGUARD", "R8-MCF-C1", "TOPN_MV_NOGUARD"),
+        []
+        if not c1_available
+        else [
+            ("C1 FINAL", "R8-FINAL-C1", "TOPN_MV_GUARD_NO_NLP"),
+            ("C1 FINAL NOGUARD", "R8-FINAL-C1", "TOPN_MV_NOGUARD"),
+            ("C1 B0", "R8-B0-C1", "TOPN_MV_GUARD_NO_NLP"),
+            ("C1 B0 NOGUARD", "R8-B0-C1", "TOPN_MV_NOGUARD"),
+            ("C1 MCF", "R8-MCF-C1", "TOPN_MV_GUARD_NO_NLP"),
+            ("C1 MCF NOGUARD", "R8-MCF-C1", "TOPN_MV_NOGUARD"),
+        ]
     ):
         payload = load_run(out, run_id)
         r = arm_daily(payload, arm)
@@ -444,9 +573,22 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
                 _num(item["days_under_water"], 0),
             ]
         )
-    lines.append(
-        _table(["series", "R", "CAGR", "Sharpe", "MDD", "Calmar", "CVaR95", "days UW"], c1_rows)
-    )
+    if c1_available:
+        lines.append(
+            _table(["series", "R", "CAGR", "Sharpe", "MDD", "Calmar", "CVaR95", "days UW"], c1_rows)
+        )
+        final_c1_row = next(row for row in c1_rows if row[0] == "C1 FINAL")
+        noguard_c1_row = next(row for row in c1_rows if row[0] == "C1 FINAL NOGUARD")
+        lines.append(
+            f"\n**C1 GUARD vs NOGUARD:** {final_c1_row[1]} vs {noguard_c1_row[1]} cumulative; "
+            f"MDD {final_c1_row[4]} vs {noguard_c1_row[4]}. The layer-4 scale statistics are in "
+            "§13.1."
+        )
+    else:
+        lines.append(
+            "The C1 run (R8) was still in flight at the plan's 8 h stop; no C1 number is "
+            "reported. The three C1 copies are kept for a later continuation.\n"
+        )
     lines.append("")
 
     # 6. stage A and B
@@ -454,6 +596,8 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
     stage_rows = []
     for config in ("Z1", "Z3", "Z4", "B0", "B1", "B2", "B3", "B4", "B5", "B6"):
         run_id = f"R2-{config}" if config.startswith("Z") else f"R1-{config}"
+        if not (out / "runs" / f"{run_id}-P1.json").is_file():
+            continue
         per = _per_window(out, run_id, "TOPN_MV_GUARD_NO_NLP")
         mdd = np.mean(
             [metrics(per[w], load_run(out, f"{run_id}-{w}")["rf"])["max_drawdown"] for w in WINDOWS]
@@ -466,28 +610,45 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         )
         stage_rows.append([config, _pct(cum), _num(mdd)])
     lines.append(_table(["configuration", "mean R", "mean MDD"], stage_rows))
-    selection_stage = json.loads((out / "selection_phase1.json").read_text())["stage"]
-    a = selection_stage["stage_a"]
-    b = selection_stage["stage_b"]
-    lines.append(
-        f"\n**Adoption rule outcome (numbers only).** Stage A: A* = **{a['a_star']}** "
-        f"(R {_pct(a['a_star_R'])}, mean MDD {_num(a['a_star_mean_mdd'])}; qualifiers "
-        f"{a['qualifiers'] or 'none'} against R > {R_THRESHOLD:.4f} and mean MDD <= "
-        f"{MDD_THRESHOLD:.4f}). Stage B: B* = **{b['b_star']}** (R {_pct(b['b_star_R'])}, "
-        f"mean MDD {_num(b['b_star_mean_mdd'])}; qualifiers {b['qualifiers'] or 'none'} "
-        "against R(A*)). No new selection is made from these numbers.\n"
-    )
+    if not (out / "selection_phase1.json").is_file():
+        lines.append(
+            "\nStage A/B were not run to completion: the Z1-Z4 cells (Stage A) are part of R2, "
+            "which reached only V0-V5 and X1 before the plan's 8 h stop. The B0-B6 rows above "
+            "are the completed Stage B candidates.\n"
+        )
+        selection_stage = None
+    else:
+        selection_stage = json.loads((out / "selection_phase1.json").read_text())["stage"]
+    if selection_stage is not None:
+        a = selection_stage["stage_a"]
+        b = selection_stage["stage_b"]
+        lines.append(
+            f"\n**Adoption rule outcome (numbers only).** Stage A: A* = **{a['a_star']}** "
+            f"(R {_pct(a['a_star_R'])}, mean MDD {_num(a['a_star_mean_mdd'])}; qualifiers "
+            f"{a['qualifiers'] or 'none'} against R > {R_THRESHOLD:.4f} and mean MDD <= "
+            f"{MDD_THRESHOLD:.4f}). Stage B: B* = **{b['b_star']}** (R {_pct(b['b_star_R'])}, "
+            f"mean MDD {_num(b['b_star_mean_mdd'])}; qualifiers {b['qualifiers'] or 'none'} "
+            "against R(A*)). No new selection is made from these numbers.\n"
+        )
 
     # 7. CHAMPION
     lines.append("## 7. CHAMPION (corrected reproduction; H windows already seen)\n")
-    selection = json.loads((out / "champion_selection_phase1.json").read_text())
-    lines.append(
-        f"The pre-registered rule selects **{selection['selected']['blend']}·"
-        f"{selection['selected']['tilt']}** (mean design MDD "
-        f"{selection['rows'][0]['mean_mdd']:.4f}).\n"
-    )
+    if not (out / "champion_selection_phase1.json").is_file():
+        lines.append(
+            "CHAMPION's corrected design set and H test (R4/R5) were not run: the run matrix "
+            "reached the plan's 8 h stop in R2. No corrected CHAMPION number is reported.\n"
+        )
+        selection = None
+    else:
+        selection = json.loads((out / "champion_selection_phase1.json").read_text())
+    if selection is not None:
+        lines.append(
+            f"The pre-registered rule selects **{selection['selected']['blend']}·"
+            f"{selection['selected']['tilt']}** (mean design MDD "
+            f"{selection['rows'][0]['mean_mdd']:.4f}).\n"
+        )
     rows = []
-    for row in selection["rows"][:5]:
+    for row in selection["rows"][:5] if selection else []:
         rows.append(
             [
                 f"{row['blend']}·{row['tilt']}",
@@ -495,8 +656,13 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
                 _pct(row["mean_cumulative_return"]),
             ]
         )
-    lines.append(_table(["config", "mean MDD", "mean R"], rows))
-    champion = json.loads((out / "selection_phase1.json").read_text())["champion"]
+    if rows:
+        lines.append(_table(["config", "mean MDD", "mean R"], rows))
+    champion = (
+        json.loads((out / "selection_phase1.json").read_text())["champion"]
+        if (out / "selection_phase1.json").is_file()
+        else {"configs": {}}
+    )
     h_rows = []
     for label, per in champion["configs"].items():
         for window in ("H1", "H2", "H3"):
@@ -519,6 +685,24 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
             f"\nHAC test of {champion['selected']} - B0T0 on the concatenated H days: mean "
             f"{test['mean_daily'] * 252 * 100:+.2f} pp/yr, t {test['t']:.2f}, two-sided p "
             f"{test['p_two_sided']:.3f}, n {test['n']}.\n"
+        )
+    if "B3R2" in champion["configs"] and champion["selected"] not in (None, "B3R2"):
+        a = concatenate(
+            [
+                arm_daily(load_run(out, f"R5-B3R2-{w}"), "TOPN_MV_GUARD_NO_NLP")
+                for w in ("H1", "H2", "H3")
+            ]
+        )
+        b = concatenate(
+            [
+                arm_daily(load_run(out, f"R5-B0T0-{w}"), "TOPN_MV_GUARD_NO_NLP")
+                for w in ("H1", "H2", "H3")
+            ]
+        )
+        diff = _hac_diff(a, b)
+        lines.append(
+            f"B3·R2 - B0·T0 on the same H days: mean {diff['mean_annual_pp']:+.2f} pp/yr, "
+            f"t {diff['t']:.2f}, two-sided p {diff['p']:.3f}, n {diff['n']}.\n"
         )
     lines.append("")
 
@@ -554,14 +738,28 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
                 ]
             )
     lines.append(_table(["config", "cell", "R", "CAGR", "MDD", "mean MDD"], ablation_rows))
+    # The 2x2 interaction on R: (B5-B0 | stop) - (B5-B0 | no stop).
+    by_key = {(row[0], row[1]): row[2] for row in ablation_rows}
+
+    def _pct_value(text: str) -> float:
+        return float(text.strip("%")) / 100.0
+
+    interaction = (
+        _pct_value(by_key[("B5", "layers 1+3+4")]) - _pct_value(by_key[("B0", "layers 1+3+4")])
+    ) - (_pct_value(by_key[("B5", "NOGUARD")]) - _pct_value(by_key[("B0", "NOGUARD")]))
+    lines.append(
+        f"\nInteraction on R, (B5 - B0 | layers 1+3+4) - (B5 - B0 | NOGUARD): "
+        f"**{100 * interaction:+.2f} pp**. The layer-4-only cells are the third column."
+    )
     lines.append("")
 
     # 9. pool attribution
     lines.append("## 9. The pool attribution\n")
     lines.append(
         "MCF vs Y2 isolates the pool (same min-variance pipeline); Y2 vs B5 isolates the "
-        "weighting; MCF vs B5 is the global difference. MARKOWITZ_BASE → MCF changes several "
-        "factors at once and is not a single-factor step.\n"
+        "weighting; MCF vs B5 is the global difference. ΔR is the first series minus the "
+        "second. MARKOWITZ_BASE -> MCF changes several factors at once and is not a "
+        "single-factor step.\n"
     )
     rows = []
     for label, a, b in (
@@ -574,58 +772,172 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
             rb = horizons[b]["per_window"][window]["cumulative_return"]
             rows.append([label, window, _pct(ra - rb)])
     lines.append(_table(["comparison", "window", "delta R"], rows))
+    # The caps table: the code's 1.5/30 and 30 %, the stored quant caps, and the realised
+    # maximum satellite weight / sector share on P1.
+    caps_rows = []
+    db_path = out / "dbs" / "R1-B5-P1.db"
+    sectors: dict[int, int] = {}
+    mb_max = 0.0
+    mb_sector = None
+    if db_path.is_file():
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            sectors = {
+                int(row[0]): int(row[1])
+                for row in conn.execute(
+                    "SELECT id, sector_id FROM assets WHERE sector_id IS NOT NULL"
+                )
+            }
+            targets_by_date: dict[str, list[tuple[int, float]]] = {}
+            for row in conn.execute(
+                "SELECT w.date, w.asset_id, w.markowitz_target_weight FROM book_weight_daily w "
+                "JOIN strategy_book b ON b.id = w.book_id "
+                "JOIN book_rebalance r ON r.book_id = b.id AND r.execution_date = w.date "
+                "WHERE b.arm_code = 'MARKOWITZ_BASE' AND w.markowitz_target_weight > 0 "
+                "AND w.asset_id IS NOT NULL"
+            ):
+                targets_by_date.setdefault(str(row[0]), []).append((int(row[1]), float(row[2])))
+            all_targets = [item for rows in targets_by_date.values() for item in rows]
+            mb_max = max((weight for _, weight in all_targets), default=0.0)
+            sector_maxima: list[float] = []
+            for rows in targets_by_date.values():
+                by_sector: dict[int, float] = {}
+                for asset_id, weight in rows:
+                    sector = sectors.get(asset_id)
+                    if sector is not None:
+                        by_sector[sector] = by_sector.get(sector, 0.0) + weight
+                if by_sector:
+                    sector_maxima.append(max(by_sector.values()))
+            mb_sector = max(sector_maxima) if sector_maxima else None
+        finally:
+            conn.close()
+    y2_payload = None
+    recheck = out / "recheck" / "runs" / "R1-B0-P1.json"
+    if recheck.is_file():
+        y2_payload = json.loads(recheck.read_text())
+    for label, payload in (
+        ("MARKOWITZ_BASE", None),
+        ("Y2 (=B0)", y2_payload),
+        ("MCF", load_run(out, "R6-MCF-P1")),
+    ):
+        if label == "MARKOWITZ_BASE":
+            max_weight = mb_max
+            max_sector = mb_sector
+            pool_text = "—"
+        else:
+            decisions = payload.get("optimizer_weights", {}) if payload else {}
+            max_weight = max(
+                (max(weights.values()) for weights in decisions.values() if weights), default=0.0
+            )
+            sector_share: list[float] = []
+            for weights in decisions.values():
+                by_sector = {}
+                for asset_id, weight in weights.items():
+                    sector = sectors.get(int(asset_id))
+                    if sector is not None:
+                        by_sector[sector] = by_sector.get(sector, 0.0) + float(weight)
+                if by_sector:
+                    sector_share.append(max(by_sector.values()))
+            max_sector = max(sector_share) if sector_share else None
+            rows_pool = payload["params"]["pool_decisions"] if payload else []
+            first = max((int(row["first_pass_n"]) for row in rows_pool), default=0)
+            final = min((int(row["final_n"]) for row in rows_pool), default=0)
+            second = any(bool(row["second_pass"]) for row in rows_pool)
+            pool_text = f"{first} -> {final}" + (" (second pass)" if second else "")
+        caps_rows.append(
+            [
+                label,
+                "5.00% (1.5/30)",
+                "30.00%",
+                f"{100 * max_weight:.2f}%",
+                "—" if max_sector is None else f"{100 * max_sector:.2f}%",
+                pool_text,
+            ]
+        )
+    lines.append("")
+    lines.append(
+        "Caps and realised maxima on P1: the name cap is 1.5/30 = 5 % and the sector cap 30 % "
+        "in both min-variance passes (the code constants); MCF uses the same two-pass path as "
+        "Y2. The realised columns are the largest single-name weight and the largest sector "
+        "share over P1's decisions."
+    )
+    lines.append(
+        _table(
+            [
+                "book",
+                "name cap (code)",
+                "sector cap (code)",
+                "max weight",
+                "max sector",
+                "first -> final",
+            ],
+            caps_rows,
+        )
+    )
     lines.append("")
 
     # 10. overfitting
     lines.append("## 10. Overfitting diagnostics on the corrected 30-configuration family\n")
-    family = stats["family"]
-    lines.append(
-        f"Family: **{family['n']}** unique configurations, **{family['sessions']}** sessions. "
-        f"Effective trials: eigenvalue participation **{family['effective_trials']['eigen_participation']:.2f}**, "
-        f"correlation clusters (|rho| >= 0.9) **{family['effective_trials']['correlation_clusters_0.9']:.0f}**.\n"
-    )
-    rows = []
-    for key, pbo in family["pbo"].items():
-        rows.append(
-            [key, _num(pbo["pbo"], 4), _num(pbo["mean_is_best"], 3), _num(pbo["mean_oos_best"], 3)]
-        )
-    lines.append(_table(["PBO variant", "PBO", "mean IS best", "mean OOS best"], rows))
-    lines.append("")
-    rows = []
-    for key, dsr in family["dsr"].items():
-        rows.append(
-            [
-                key,
-                _num(dsr["sharpe_annual"], 3),
-                _num(dsr["skew"], 3),
-                _num(dsr["kurtosis"], 3),
-                _num(dsr["sr0_daily"], 5),
-                _num(dsr["dsr"], 3),
-            ]
-        )
-    lines.append(_table(["DSR", "SR annual", "skew", "kurtosis", "SR0 daily", "DSR"], rows))
-    lines.append("")
-    rows = []
-    for key, emax in family["expected_max"].items():
-        rows.append([key, _num(emax["e_max_daily"], 5), _num(emax["e_max_annual"], 3)])
-    lines.append(_table(["E[max]", "daily", "annual"], rows))
-    lines.append("")
-    for key, rc in family["white_rc_vs_markowitz"].items():
+    family = stats.get("family")
+    if family is None:
         lines.append(
-            f"White RC vs MARKOWITZ_BASE ({key}, mean block {rc['mean_block']:.0f}): best "
-            f"{rc['best']}, differential {rc['mean_differential_annual']:+.2f} pp/yr, "
-            f"p {rc['p_value']:.3f}.\n"
+            "The corrected 30-configuration family is incomplete: R2 reached V0-V5 and X1 "
+            "before the plan's 8 h stop, so PBO, DSR, White's Reality Check and walk-forward "
+            "are not computed. Reporting them on a subset would change N and the diagnostics' "
+            "meaning; none is claimed.\n"
         )
-    for key, wf in family["walk_forward"].items():
-        lines.append(f"Walk-forward ({key} configurations):")
-        for pick in wf["picks"]:
-            lines.append(
-                f"- after {len(pick['after'])} windows: picked {pick['picked']}, "
-                f"rank {pick['picked_rank_next']}/{pick['of']} next, "
-                f"next R {_pct(pick['next_return'])}, next MDD {_num(pick['next_mdd'])}"
+    else:
+        lines.append(
+            f"Family: **{family['n']}** unique configurations, **{family['sessions']}** sessions. "
+            f"Effective trials: eigenvalue participation **{family['effective_trials']['eigen_participation']:.2f}**, "
+            f"correlation clusters (|rho| >= 0.9) **{family['effective_trials']['correlation_clusters_0.9']:.0f}**.\n"
+        )
+        rows = []
+        for key, pbo in family["pbo"].items():
+            rows.append(
+                [
+                    key,
+                    _num(pbo["pbo"], 4),
+                    _num(pbo["mean_is_best"], 3),
+                    _num(pbo["mean_oos_best"], 3),
+                ]
             )
+        lines.append(_table(["PBO variant", "PBO", "mean IS best", "mean OOS best"], rows))
         lines.append("")
-
+        rows = []
+        for key, dsr in family["dsr"].items():
+            rows.append(
+                [
+                    key,
+                    _num(dsr["sharpe_annual"], 3),
+                    _num(dsr["skew"], 3),
+                    _num(dsr["kurtosis"], 3),
+                    _num(dsr["sr0_daily"], 5),
+                    _num(dsr["dsr"], 3),
+                ]
+            )
+        lines.append(_table(["DSR", "SR annual", "skew", "kurtosis", "SR0 daily", "DSR"], rows))
+        lines.append("")
+        rows = []
+        for key, emax in family["expected_max"].items():
+            rows.append([key, _num(emax["e_max_daily"], 5), _num(emax["e_max_annual"], 3)])
+        lines.append(_table(["E[max]", "daily", "annual"], rows))
+        lines.append("")
+        for key, rc in family["white_rc_vs_markowitz"].items():
+            lines.append(
+                f"White RC vs MARKOWITZ_BASE ({key}, mean block {rc['mean_block']:.0f}): best "
+                f"{rc['best']}, differential {rc['mean_differential_annual']:+.2f} pp/yr, "
+                f"p {rc['p_value']:.3f}.\n"
+            )
+        for key, wf in family["walk_forward"].items():
+            lines.append(f"Walk-forward ({key} configurations):")
+            for pick in wf["picks"]:
+                lines.append(
+                    f"- after {len(pick['after'])} windows: picked {pick['picked']}, "
+                    f"rank {pick['picked_rank_next']}/{pick['of']} next, "
+                    f"next R {_pct(pick['next_return'])}, next MDD {_num(pick['next_mdd'])}"
+                )
+            lines.append("")
     # 11. exits
     lines.append("## 11. Exits\n")
     events = json.loads(Path("docs/exit_events.json").read_text())["events"]
@@ -708,16 +1020,65 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
     lines.append(
         "The three failures are `imputed_reference` (-0.299) with the FDIC release as source. "
         f"In H1's FINAL run they were held at their exit: **{sorted(held) or 'none'}**. "
-        "A name that is absent was either not selected by cycle, not in the risk-model panel, "
-        "or vetoed; the H1 `optimizer_weights` in the run JSON is the record.\n"
+        "Weights in every arm: 0. The cause of each absence is read from the run copy's own "
+        "`cycle_ranking` rows (H1 decisions, `selected` and `veto_rules_json`).\n"
     )
+    h1_db = out / "dbs" / "R1-B5-H1.db"
+    if h1_db.is_file():
+        conn = sqlite3.connect(f"file:{h1_db}?mode=ro", uri=True)
+        rows_fail = []
+        try:
+            for ticker, asset_id in (("SIVB", 475), ("SBNY", 469), ("FRC", 229)):
+                values = conn.execute(
+                    "SELECT COUNT(*), SUM(r.selected), MIN(r.rank), MAX(r.rank), "
+                    "GROUP_CONCAT(DISTINCT r.veto_rules_json) "
+                    "FROM cycle_ranking r JOIN cycle_run c ON c.id = r.cycle_run_id "
+                    "WHERE r.asset_id = ? AND c.cycle_date >= '2022-10-13' "
+                    "AND c.cycle_date <= '2023-10-26'",
+                    (asset_id,),
+                ).fetchone()
+                rows_fail.append(
+                    [
+                        ticker,
+                        str(asset_id),
+                        str(int(values[0] or 0)),
+                        str(int(values[1] or 0)),
+                        str(values[2]),
+                        str(values[3]),
+                        str(values[4] or "[]"),
+                        "not selected (outside the pool)"
+                        if ticker == "SIVB"
+                        else "vetoed UNSCORED (no LLM filing)",
+                    ]
+                )
+        finally:
+            conn.close()
+        lines.append(
+            _table(
+                [
+                    "ticker",
+                    "asset",
+                    "H1 decisions",
+                    "selected",
+                    "min rank",
+                    "max rank",
+                    "veto rules",
+                    "cause",
+                ],
+                rows_fail,
+            )
+        )
+    lines.append("")
     imputed = [event for event in events if event["valuation_basis"] == "imputed_reference"]
     frozen = [event for event in events if event["valuation_basis"] == "unobservable_frozen"]
     lines.append(
         f"Counts: `imputed_reference` **{len(imputed)}** (SIVB, SBNY, FRC); "
         f"`unobservable_frozen` **{len(frozen)}**. The plan's sensitivity at 0 and -1.0 for "
         "every imputed case therefore has the three names; the measured effect on the held "
-        "arms is in the run-level exit table above (zero when the name was not held).\n"
+        "arms is in the run-level exit table above (zero when the name was not held). "
+        "Sensitivity: no arm held SIVB, SBNY or FRC, so the 0 and -1.0 variants change no "
+        "weight, no NAV and no reported metric; the two sensitivity series are identical to "
+        "the main one and are not tabulated separately.\n"
     )
     lines.append("")
 
@@ -735,9 +1096,52 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         cells = []
         for block in (5, 10, 21, 42):
             cells.append(_num(block_mdd_diff(a, other, block=block)["p_value"], 3))
-        stationary = _num(stationary_mdd_diff(a, other, mean_block=10)["p_value"], 3)
-        rows.append([label, *cells, stationary])
-    lines.append(_table(["comparison", "b5", "b10", "b21", "b42", "stationary 10"], rows))
+        stationary10 = _num(stationary_mdd_diff(a, other, mean_block=10)["p_value"], 3)
+        stationary21 = _num(stationary_mdd_diff(a, other, mean_block=21)["p_value"], 3)
+        rows.append([label, *cells, stationary10, stationary21])
+    lines.append(
+        _table(["comparison", "b5", "b10", "b21", "b42", "stationary 10", "stationary 21"], rows)
+    )
+    if (out / "benchmarks.json").is_file() and (out / "runs" / "R8-FINAL-C1.json").is_file():
+        bench = json.loads((out / "benchmarks.json").read_text())["C1"]["series"]
+        final_c1 = load_run(out, "R8-FINAL-C1")
+        spy_all = _spy_returns()
+        c1_spy = {
+            day: spy_all[day] for day in final_c1["daily"]["TOPN_MV_GUARD_NO_NLP"] if day in spy_all
+        }
+        c1_series = {
+            "FINAL": arm_daily(final_c1, "TOPN_MV_GUARD_NO_NLP"),
+            "FINAL NOGUARD": arm_daily(final_c1, "TOPN_MV_NOGUARD"),
+            "MARKOWITZ_BASE": arm_daily(final_c1, "MARKOWITZ_BASE"),
+            "BMK_EXPO(GUARD)": {day: float(v) for day, v in bench["BMK_EXPO_GUARD"].items()},
+            "SPY": c1_spy,
+        }
+        if (out / "runs" / "R8-MCF-C1.json").is_file():
+            c1_series["MCF"] = arm_daily(load_run(out, "R8-MCF-C1"), "TOPN_MV_GUARD_NO_NLP")
+        c1_rows = []
+        for label, other in (
+            ("FINAL vs MARKOWITZ_BASE", c1_series["MARKOWITZ_BASE"]),
+            ("FINAL vs MCF", c1_series["MCF"]),
+            ("FINAL vs FINAL NOGUARD", c1_series["FINAL NOGUARD"]),
+            ("FINAL vs SPY", c1_series["SPY"]),
+            ("FINAL vs BMK_EXPO(GUARD)", c1_series["BMK_EXPO(GUARD)"]),
+        ):
+            a = c1_series["FINAL"]
+            cells = [
+                _num(block_mdd_diff(a, other, block=block)["p_value"], 3)
+                for block in (5, 10, 21, 42)
+            ]
+            stationary10 = _num(stationary_mdd_diff(a, other, mean_block=10)["p_value"], 3)
+            stationary21 = _num(stationary_mdd_diff(a, other, mean_block=21)["p_value"], 3)
+            c1_rows.append([label, *cells, stationary10, stationary21])
+        lines.append("")
+        lines.append("Continuous C1:")
+        lines.append(
+            _table(
+                ["comparison", "b5", "b10", "b21", "b42", "stationary 10", "stationary 21"],
+                c1_rows,
+            )
+        )
     lines.append("")
 
     # 13. checks
@@ -807,7 +1211,7 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
     for label, guard_run, guard_arm, noguard_run, noguard_arm in (
         ("FINAL", FINAL, "TOPN_MV_GUARD_NO_NLP", FINAL, "TOPN_MV_NOGUARD"),
         ("B0", B0, "TOPN_MV_GUARD_NO_NLP", B0, "TOPN_MV_NOGUARD"),
-        ("MB", B0, "MARKOWITZ_BASE_GUARD", B0, "MARKOWITZ_BASE"),
+        ("MARKOWITZ_BASE", B0, "MARKOWITZ_BASE_GUARD", B0, "MARKOWITZ_BASE"),
         ("MCF", "R6-MCF", "TOPN_MV_GUARD_NO_NLP", "R6-MCF", "TOPN_MV_NOGUARD"),
     ):
         if label == "MCF":
@@ -836,23 +1240,29 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
     lines.append("")
     lines.append("Measured GUARD contribution (GUARD - NOGUARD):")
     lines.append(_table(["config", "delta R", "delta MDD"], contribution))
+    if (out / "runs" / "R8-FINAL-C1.json").is_file():
+        c1_payload = load_run(out, "R8-FINAL-C1")
+        c1_scales = c1_payload.get("layer_scales", {}).get("TOPN_MV_GUARD_NO_NLP", {})
+        parts = (
+            ", ".join(
+                f"{layer}: {value['sessions_scaled']} sessions, mean {value['mean_scale']:.3f}, "
+                f"min {value['min_scale']:.3f}"
+                for layer, value in sorted(c1_scales.items())
+            )
+            or "none"
+        )
+        lines.append(f"\nC1 layer 3/4 scales (FINAL GUARD): {parts}.")
     lines.append("")
     lines.append("### 13.2 CVaR log vs simple\n")
-    l1 = load_run(out, "L1-FINAL-P1")
-    l2 = load_run(out, "L2-FINAL-P1")
-    common = sorted(set(l1.get("optimizer_weights", {})) & set(l2.get("optimizer_weights", {})))
-    deltas = []
-    for decision in common:
-        a = l1["optimizer_weights"][decision]
-        b = l2["optimizer_weights"][decision]
-        keys = set(a) | set(b)
-        deltas.append(max(abs(float(a.get(k, 0.0)) - float(b.get(k, 0.0))) for k in keys))
+    diag = json.loads((out / "cvar_diag.json").read_text())
     lines.append(
-        f"P1 decisions with both matrices: {len(common)}; max |Δw| {max(deltas) if deltas else 0:.6f}. "
-        "The full 61-decision figure and the CVaR95 difference are in `stats.json` after the "
-        "L runs.\n"
+        f"On the {diag['decisions']} FINAL decisions, the log and simple solutions differ by at "
+        f"most **{diag['max_abs_dw']:.4f}** in a single weight; the CVaR95 difference is at most "
+        f"**{100 * diag['max_abs_cvar_diff']:.4f} pp** (mean "
+        f"{100 * diag['mean_cvar_diff']:+.4f} pp). The full per-decision rows are in "
+        "`cvar_diag.json`. The LP's loss is linear in simple returns, so the simple matrix is the "
+        "correct one; the log matrix overstates the left tail.\n"
     )
-    lines.append("")
     lines.append("### 13.3 Filter change\n")
     lines.append(
         "The 61 FINAL decision dates were evaluated with the price series and the total-return "
