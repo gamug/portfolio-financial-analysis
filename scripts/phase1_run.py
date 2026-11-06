@@ -296,6 +296,22 @@ def jobs_for(  # noqa: C901, PLR0911, PLR0912 - one branch per block
         )
         control["tag"] = "DAILY"
         return [*monthly, control]
+    if block == "R10":
+        return [
+            _job(
+                "R10",
+                "MARKOWITZ_SAMPLE",
+                window,
+                {
+                    **V2,
+                    "satellite_weighting": "minvar",
+                    "cov_estimator": "sample",
+                },
+                10.0,
+                diagnostic_only=True,
+            )
+            for window in (*W6, "C1")
+        ]
     if block == "L1":
         return [
             _job(
@@ -403,6 +419,7 @@ def _command(window: str, db: Path, job: dict[str, Any]) -> list[str]:
         str(o.get("filter_series", "tr")),
         "--filter-frequency",
         str(o.get("filter_frequency", "daily")),
+        *(["--cov-estimator", str(o["cov_estimator"])] if o.get("cov_estimator") else []),
         "--cvar-scenarios",
         str(o.get("cvar_scenarios", "simple")),
         "--pool-mode",
@@ -534,7 +551,7 @@ def main(  # noqa: PLR0915 - one CLI path
     parser.add_argument(
         "--block",
         required=True,
-        choices=("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "L1", "L2", "L3"),
+        choices=("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "L1", "L2", "L3"),
     )
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--workers", type=int, default=4)

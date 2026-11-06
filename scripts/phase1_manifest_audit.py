@@ -31,6 +31,7 @@ FIELDS = [
     "exit",
     "seconds",
     "diagnostic_only",
+    "control",
     "output_json",
     "log",
     "db_retained",
@@ -87,6 +88,8 @@ re-runs a backtest.
   present: the eight Phase-1 files (including `R1-B0-P2.db` from the earlier fix round) and
   the seven F2-1 B5 monthly files.  The B0 monthly and daily-control copies were deleted
   after collection.  The earlier L1/L2 rows point at deleted copies and are false.
+- `control`: true for the R10 MARKOWITZ_SAMPLE rows (a covariance-regularisation control,
+  not a candidate); false otherwise.
 - `exit`: 0 for every row.
 
 ## Run-time overrun against the 8 h estimate
@@ -137,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         row["diagnostic_only"] = (
             "True" if str(row.get("diagnostic_only", "")).lower() == "true" else "False"
         )
+        row["control"] = "True" if row.get("block") == "R10" else "False"
         db_path = out / "dbs" / f"{row['run_id']}.db"
         row["db_retained"] = "True" if db_path.is_file() else "False"
         row.pop("db_kept", None)
