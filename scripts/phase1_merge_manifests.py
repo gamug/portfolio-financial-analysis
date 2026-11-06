@@ -23,6 +23,7 @@ FIELDS = [
     "window",
     "cost_bps",
     "params_sha256",
+    "config_sha256",
     "template_sha256",
     "output_sha256",
     "exit",
@@ -30,8 +31,13 @@ FIELDS = [
     "diagnostic_only",
     "output_json",
     "log",
-    "db_kept",
+    "db_retained",
 ]
+
+
+def _config_sha256(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(payload["params"], sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def _sha256(path: Path) -> str:
@@ -59,11 +65,14 @@ def main(  # noqa: C901, PLR0912 - one merge path
                 previous = rows.get(run_id)
                 if previous is None or (previous.get("exit") != "0" and row.get("exit") == "0"):
                     rows[run_id] = row
-    for _run_id, row in rows.items():
+    for run_id, row in rows.items():
         json_path = Path(row.get("output_json") or "")
         if json_path.is_file():
             row["exit"] = "0"
             row["output_sha256"] = _sha256(json_path)
+            row["config_sha256"] = _config_sha256(json.loads(json_path.read_text()))
+        row["db_retained"] = "True" if (out / "dbs" / f"{run_id}.db").is_file() else "False"
+        row.pop("db_kept", None)
     # Any collector JSON without a manifest row (a block killed before its writer flushed,
     # or a resumed block) is added from the JSON's own params; the sha is recomputed.
     for json_path in sorted((out / "runs").glob("*.json")):
@@ -83,6 +92,7 @@ def main(  # noqa: C901, PLR0912 - one merge path
             "params_sha256": _sha256(
                 Path(__file__).resolve().parents[1] / "src/cycle/backtest/params.frozen.toml"
             ),
+            "config_sha256": _config_sha256(payload),
             "template_sha256": _sha256(
                 Path("/workspaces/thesis/scratch/final/out/pitfix/templates")
                 / ("template_C1_pitfix.db" if window == "C1" else f"template_{window}_pitfix.db")
@@ -93,7 +103,7 @@ def main(  # noqa: C901, PLR0912 - one merge path
             "diagnostic_only": str(run_id.endswith("R2-Z2-P1") or "-Z2-" in run_id).lower(),
             "output_json": str(json_path),
             "log": "",
-            "db_kept": "",
+            "db_retained": "True" if (out / "dbs" / f"{run_id}.db").is_file() else "False",
         }
     target = out / "runs_manifest.csv"
     with target.open("w", newline="") as handle:

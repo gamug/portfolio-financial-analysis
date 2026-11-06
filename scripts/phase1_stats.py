@@ -29,6 +29,7 @@ PERIODS = 252
 MIN_OBS_CI = 3
 MIN_TRIALS = 2
 LEVEL_90 = 0.90
+SPY_FILE = Path("/workspaces/thesis/scratch/final/data/spy/spy_tr.json")
 
 
 def load_run(out: Path, run_id: str) -> dict[str, Any]:
@@ -131,23 +132,83 @@ def hac_mean_ci(returns: dict[str, float], level: float = 0.90) -> dict[str, flo
     return {"mean": mean, "se": se, "low": mean - zcrit * se, "high": mean + zcrit * se}
 
 
-def block_mdd_diff(
+def _bootstrap_p_values(observed: float, diffs: np.ndarray) -> dict[str, float]:
+    """Pivot, mean-centred and legacy p-values from the same bootstrap draws.
+
+    ``pivot`` recentres the replicate differences on the observed one (the bootstrap
+    distribution under H0), ``mean_centred`` recentres on the replicate mean, and ``legacy``
+    is the old uncentred |d*| >= |d_obs| count.  The first is the primary test."""
+    n_boot = len(diffs)
+    threshold = abs(observed) - 1e-15
+
+    def _p(values: np.ndarray) -> float:
+        return float((np.sum(np.abs(values) >= threshold) + 1) / (n_boot + 1))
+
+    return {
+        "p_value": _p(diffs - observed),
+        "p_value_pivot": _p(diffs - observed),
+        "p_value_mean_centred": _p(diffs - float(diffs.mean())),
+        "p_value_legacy": _p(diffs),
+    }
+
+
+def mdd_bootstrap_distribution(
     a: dict[str, float], b: dict[str, float], *, block: int, n_boot: int = 4999, seed: int = 7
-) -> dict[str, float]:
+) -> tuple[float, np.ndarray]:
+    """The paired fixed-block bootstrap draws behind :func:`block_mdd_diff`."""
     days = sorted(set(a) & set(b))
     ra = np.asarray([a[day] for day in days], dtype=float)
     rb = np.asarray([b[day] for day in days], dtype=float)
     observed = _max_drawdown(ra) - _max_drawdown(rb)
     rng = np.random.default_rng(seed)
     n = len(days)
-    count = 0
-    for _ in range(n_boot):
+    diffs = np.empty(n_boot, dtype=float)
+    for i in range(n_boot):
         starts = rng.integers(0, n, size=math.ceil(n / block))
         index = np.concatenate([(np.arange(s, s + block) % n) for s in starts])[:n]
-        diff = _max_drawdown(ra[index]) - _max_drawdown(rb[index])
-        if abs(diff) >= abs(observed) - 1e-15:
-            count += 1
-    return {"observed": float(observed), "p_value": (count + 1) / (n_boot + 1)}
+        diffs[i] = _max_drawdown(ra[index]) - _max_drawdown(rb[index])
+    return float(observed), diffs
+
+
+def hac_mean_diff(a: dict[str, float], b: dict[str, float], *, lag: int = 10) -> dict[str, float]:
+    """Newey-West (Bartlett) test of the mean daily difference ``a - b``.
+
+    ``lag`` is fixed, not the automatic rule used by :func:`hac_mean_ci`.  The p-value is
+    two-sided normal."""
+    days = sorted(set(a) & set(b))
+    diff = np.asarray([a[day] - b[day] for day in days], dtype=float)
+    n = len(diff)
+    mean = float(diff.mean())
+    z = diff - mean
+    var = float(np.dot(z, z) / n)
+    for offset in range(1, lag + 1):
+        weight = 1.0 - offset / (lag + 1.0)
+        var += 2.0 * weight * float(np.dot(z[offset:], z[:-offset]) / n)
+    se = math.sqrt(max(var, 0.0) / n)
+    t = mean / se if se > 0 else 0.0
+    p = 2.0 * (1.0 - _norm_cdf(abs(t)))
+    return {
+        "mean_daily": mean,
+        "mean_annual_pp": mean * PERIODS * 100.0,
+        "t": t,
+        "p_value": p,
+        "n": float(n),
+        "lag": float(lag),
+    }
+
+
+def block_mdd_diff(
+    a: dict[str, float], b: dict[str, float], *, block: int, n_boot: int = 4999, seed: int = 7
+) -> dict[str, float]:
+    observed, diffs = mdd_bootstrap_distribution(a, b, block=block, n_boot=n_boot, seed=seed)
+    return {
+        "observed": observed,
+        "bootstrap_mean": float(diffs.mean()),
+        "block": float(block),
+        "n_boot": float(n_boot),
+        "seed": float(seed),
+        **_bootstrap_p_values(observed, diffs),
+    }
 
 
 def stationary_indices(rng: np.random.Generator, n: int, mean_block: float) -> np.ndarray:
@@ -176,13 +237,18 @@ def stationary_mdd_diff(
     observed = _max_drawdown(ra) - _max_drawdown(rb)
     rng = np.random.default_rng(seed)
     n = len(days)
-    count = 0
-    for _ in range(n_boot):
+    diffs = np.empty(n_boot, dtype=float)
+    for i in range(n_boot):
         index = stationary_indices(rng, n, mean_block)
-        diff = _max_drawdown(ra[index]) - _max_drawdown(rb[index])
-        if abs(diff) >= abs(observed) - 1e-15:
-            count += 1
-    return {"observed": float(observed), "p_value": (count + 1) / (n_boot + 1)}
+        diffs[i] = _max_drawdown(ra[index]) - _max_drawdown(rb[index])
+    return {
+        "observed": float(observed),
+        "bootstrap_mean": float(diffs.mean()),
+        "mean_block": float(mean_block),
+        "n_boot": float(n_boot),
+        "seed": float(seed),
+        **_bootstrap_p_values(observed, diffs),
+    }
 
 
 # --------------------------------------------------------------------------------------
@@ -286,7 +352,7 @@ def _sharpe_columns(matrix: np.ndarray) -> np.ndarray:
 
 
 def deflated_sharpe(
-    returns: np.ndarray, n_trials: int, trial_sharpes: np.ndarray | None = None
+    returns: np.ndarray, n_trials: float, trial_sharpes: np.ndarray | None = None
 ) -> dict[str, float]:
     """Bailey & López de Prado (2014) eq. (2): DSR at N trials."""
     t = len(returns)
@@ -381,7 +447,7 @@ def _norm_ppf(p: float) -> float:
     )
 
 
-def expected_max(n_trials: int, v_sr: float) -> dict[str, float]:
+def expected_max(n_trials: float, v_sr: float) -> dict[str, float]:
     if n_trials < MIN_TRIALS:
         return {"e_max_daily": 0.0, "e_max_annual": 0.0}
     euler = 0.5772156649015329
@@ -546,20 +612,26 @@ def main(argv: list[str] | None = None) -> int:
     # The DSR / E[max] algebra is in daily Sharpe units; the family table reports annualised.
     sharpes_daily = sharpes / math.sqrt(PERIODS)
     trial_variance = float(np.var(sharpes_daily, ddof=1))
+    effective = effective_trials(series)
+    final_excess = excess_matrix[:, names.index("R1-B5")]
+    n_eff_eigen = effective["eigen_participation"]
+    n_eff_clusters = effective["correlation_clusters_0.9"]
     payload["family"] = {
         "configurations": names,
         "n": len(names),
         "sessions": len(days),
         "sharpes_annual": dict(zip(names, sharpes.tolist(), strict=True)),
         "trial_variance_daily": trial_variance,
-        "effective_trials": effective_trials(series),
+        "effective_trials": effective,
         "dsr": {
-            "N30": deflated_sharpe(
-                excess_matrix[:, names.index("R1-B5")], len(names), sharpes_daily
-            ),
-            "N55": deflated_sharpe(excess_matrix[:, names.index("R1-B5")], 55, sharpes_daily),
+            "N_eff_eigen": deflated_sharpe(final_excess, n_eff_eigen, sharpes_daily),
+            "N_eff_clusters": deflated_sharpe(final_excess, n_eff_clusters, sharpes_daily),
+            "N30": deflated_sharpe(final_excess, len(names), sharpes_daily),
+            "N55": deflated_sharpe(final_excess, 55, sharpes_daily),
         },
         "expected_max": {
+            "N_eff_eigen": expected_max(n_eff_eigen, trial_variance),
+            "N_eff_clusters": expected_max(n_eff_clusters, trial_variance),
             "N30": expected_max(len(names), trial_variance),
             "N55": expected_max(55, trial_variance),
         },
@@ -596,6 +668,11 @@ def main(argv: list[str] | None = None) -> int:
         "q10": white_reality_check(series, markowitz, mean_block=10.0),
         "q1": white_reality_check(series, markowitz, mean_block=1.0),
     }
+    spy = _spy_series()
+    payload["family"]["white_rc_vs_spy"] = {
+        "q10": white_reality_check(series, spy, mean_block=10.0),
+        "q1": white_reality_check(series, spy, mean_block=1.0),
+    }
     (out / "stats.json").write_text(json.dumps(payload, indent=1) + "\n")
     print(json.dumps({"family": len(names), "sessions": len(days)}))
     return 0
@@ -607,6 +684,11 @@ def _markowitz_series(out: Path) -> dict[str, float]:
         payload = load_run(out, f"R1-B0-{window}")
         parts.append(arm_daily(payload, "MARKOWITZ_BASE"))
     return concatenate(parts)
+
+
+def _spy_series() -> dict[str, float]:
+    raw = json.loads(SPY_FILE.read_text())
+    return {str(day): float(row["tr"]) for day, row in raw.items() if row.get("tr") is not None}
 
 
 if __name__ == "__main__":

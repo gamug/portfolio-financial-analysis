@@ -11526,3 +11526,38 @@ the three books is in the REPORT.
 subset of {1, 3, 4}; the old rule required layer 1. The engine already supported the layer list.
 `tests/test_backtest_driver.py::test_layer_4_alone_runs_for_the_ablation` runs a [4]-only book
 end to end and records it in `params_json`.
+
+## AUDIT-STATS — Phase-1 family Sharpe, HAC tests and pivot MDD bootstrap (2026-11-06)
+
+**Status**: audit round on PR #195. `scripts/phase1_stats.py` uses the same excess return
+(net minus the session's French RF) for the family trial Sharpes, SR0, DSR, E[max] and the
+PBO Sharpe variants; the Calmar PBO and the White RC return differentials stay on net
+returns. The family's effective-trial counts are now reported (eigenvalue participation
+floored at 2, and the |rho| >= 0.9 correlation clusters), with DSR and E[max] at each. White's
+Reality Check is run against SPY as well as MARKOWITZ_BASE (stationary blocks 10 and 1).
+`scripts/phase1_benchmarks.py` now records gross, cost and exposure series so the benchmark
+cost column and the gross/net/turnover table are measured, not copied. The fixed-lag
+Newey-West test (`hac_mean_diff`, Bartlett, lag 10 with 5/21 sensitivity) is added for the six
+paired comparisons. The MDD bootstrap now reports the pivot p (primary: `d*_null = d* - d_obs`)
+and the bootstrap-mean-centred p (sensitivity), plus `d_obs` and the bootstrap mean; the old
+uncentred p is kept in Appendix A of the report.
+
+**Symptom**: the old family Sharpe was computed on raw net returns while the report's
+`metrics()` Sharpe used excess returns; the old MDD p-value counted `|d*| >= |d_obs|` without
+recentring, so it was a percentile diagnostic rather than a test of H0: dMDD = 0.
+
+**Measured**: B5's family Sharpe is **0.476** annual (still the family's highest; B0 0.434).
+DSR at N30/N55 is **0.754/0.742**, at N_eff 2 (both definitions) **0.828**. PBO is unchanged
+(S16 0.9244). White RC vs MARKOWITZ_BASE is -0.37 pp/yr (p 0.860/0.844); vs SPY it is
+-3.85 pp/yr (p 0.960/0.924). The concatenated lag-10 HAC differences reproduce Reviewer A:
+B5-B0 +0.38 (p 0.401), B5-MB -1.29 (0.710), B5-MCF -0.02 (0.988), B5-BMK_EXPO -4.29
+(0.110), MCF-B0 +0.39 (0.719). The pivot MDD p for FINAL vs MCF, block 10, moves from
+0.084 to **0.247** (mean-centred sensitivity 0.049); every §12 p is listed old vs new in
+Appendix A. The 20 bp concatenated R is 39.53% (FINAL), 37.25% (B0), 50.66%
+(MARKOWITZ_BASE).
+
+**Verification**: `tests/test_phase1_stats.py` pins the DSR Sharpe to `metrics()["sharpe"]` on
+the same excess series, the identical-series pivot p = 1, and the pivot recentring formula.
+Real-data outputs are `stats.json`, `benchmarks.json`, `REPORT.md`,
+`runs_manifest.csv` and `MANIFEST_NOTES.md` under
+`/workspaces/thesis/scratch/final/out/phase1/`.
