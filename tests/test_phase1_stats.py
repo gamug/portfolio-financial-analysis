@@ -32,3 +32,26 @@ def test_the_dsr_sharpe_equals_the_metrics_sharpe_on_the_same_excess_series() ->
     assert dsr["sharpe_daily"] * np.sqrt(phase1_stats.PERIODS) == pytest.approx(
         report["sharpe"], abs=1e-12
     )
+
+
+def test_mdd_pivot_p_is_one_on_identical_series() -> None:
+    days = [f"2024-02-{index:02d}" for index in range(1, 42)]
+    a = {day: 0.001 * ((index % 5) - 2) for index, day in enumerate(days)}
+    result = phase1_stats.block_mdd_diff(a, dict(a), block=5, n_boot=199, seed=7)
+    assert result["observed"] == 0.0
+    assert result["bootstrap_mean"] == 0.0
+    assert result["p_value_pivot"] == 1.0
+    assert result["p_value_mean_centred"] == 1.0
+
+
+def test_mdd_pivot_recentres_on_the_observed_difference() -> None:
+    days = [f"2024-03-{index:02d}" for index in range(1, 42)]
+    a = {day: 0.002 + 0.004 * ((index % 7) - 3) / 3 for index, day in enumerate(days)}
+    b = {day: 0.001 + 0.003 * ((index % 5) - 2) / 2 for index, day in enumerate(days)}
+    result = phase1_stats.block_mdd_diff(a, b, block=5, n_boot=199, seed=7)
+    observed, diffs = phase1_stats.mdd_bootstrap_distribution(a, b, block=5, n_boot=199, seed=7)
+    assert result["observed"] == pytest.approx(observed)
+    assert result["bootstrap_mean"] == pytest.approx(float(diffs.mean()))
+    expected = (np.sum(np.abs(diffs - observed) >= abs(observed) - 1e-15) + 1) / (len(diffs) + 1)
+    assert result["p_value_pivot"] == pytest.approx(float(expected))
+    assert np.mean(diffs - observed) == pytest.approx(float(diffs.mean()) - observed)

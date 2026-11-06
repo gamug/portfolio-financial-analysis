@@ -24,13 +24,13 @@ from phase1_stats import (
     block_mdd_diff,
     concatenate,
     hac_mean_ci,
+    hac_mean_diff,
     load_run,
     metrics,
     stationary_mdd_diff,
 )
 
 OLD = Path("/workspaces/thesis/scratch/final/out/final_round/runs")
-R_THRESHOLD = 0.8446
 MDD_THRESHOLD = 0.0831
 EXIT_EPS = 1e-4
 SPY_FILE = Path("/workspaces/thesis/scratch/final/data/spy/spy_tr.json")
@@ -144,11 +144,22 @@ def _load_stats(out: Path) -> dict[str, Any]:
     return json.loads((out / "stats.json").read_text())
 
 
-def _exits_table(out: Path) -> list[dict[str, Any]]:
+def _exits_table(out: Path) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    events = json.loads(Path("docs/exit_events.json").read_text())["events"]
+    by_key = {(event["ticker"], event["stint_end"]): event for event in events}
     records = []
+    stats = {"rows": 0, "joined": 0, "missing": 0, "old_accession": 0}
     for path in sorted((out / "runs").glob("*.json")):
         payload = json.loads(path.read_text())
         for row in payload.get("exits", []):
+            stats["rows"] += 1
+            event = by_key.get((row["ticker"], row["stint_end"]))
+            if event is None:
+                stats["missing"] += 1
+                continue
+            stats["joined"] += 1
+            if "0001193125-23-249062" in event["source"]:
+                stats["old_accession"] += 1
             if float(row.get("residual_weight", 0.0)) <= EXIT_EPS:
                 continue
             if float(row.get("weight_before", 0.0)) <= EXIT_EPS:
@@ -159,13 +170,31 @@ def _exits_table(out: Path) -> list[dict[str, Any]]:
                     "run": path.stem,
                     "window": payload["run"]["window"],
                     **row,
+                    "source": event["source"],
                 }
             )
-    return records
+    if stats["missing"]:
+        raise SystemExit(f"{stats['missing']} exit rows have no event-table source")
+    return records, stats
+
+
+MDD_SCHEMES = ("b5", "b10", "b21", "b42", "stationary 10", "stationary 21")
+
+
+def _mdd_schemes(a: dict[str, float], b: dict[str, float]) -> dict[str, dict[str, float]]:
+    values = {f"b{block}": block_mdd_diff(a, b, block=block) for block in (5, 10, 21, 42)}
+    values["stationary 10"] = stationary_mdd_diff(a, b, mean_block=10)
+    values["stationary 21"] = stationary_mdd_diff(a, b, mean_block=21)
+    return values
 
 
 def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per block
     stats = _load_stats(out) if (out / "stats.json").is_file() else {}
+    bench_raw = (
+        json.loads((out / "benchmarks.json").read_text())
+        if (out / "benchmarks.json").is_file()
+        else {}
+    )
     spy = _spy_returns()
     horizons: dict[str, Any] = {}
     for name, run_id, arm in (
@@ -221,9 +250,33 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
             "corrected": metrics(_concat(parts), _rf_concat(out, B0)),
             "per_window": {w: metrics(parts[w], load_run(out, f"{B0}-{w}")["rf"]) for w in WINDOWS},
             "concat": _concat(parts),
-            "cost_bps": 0.0,
-            "turnover": 0.0,
-            "per_window_cost": {w: 0.0 for w in WINDOWS},
+            "cost_bps": sum(
+                float(
+                    bench_raw.get(w, {})
+                    .get("statistics", {})
+                    .get(benchmark, {})
+                    .get("cost_bps", 0.0)
+                )
+                for w in WINDOWS
+            ),
+            "turnover": sum(
+                float(
+                    bench_raw.get(w, {})
+                    .get("statistics", {})
+                    .get(benchmark, {})
+                    .get("turnover", 0.0)
+                )
+                for w in WINDOWS
+            ),
+            "per_window_cost": {
+                w: float(
+                    bench_raw.get(w, {})
+                    .get("statistics", {})
+                    .get(benchmark, {})
+                    .get("cost_bps", 0.0)
+                )
+                for w in WINDOWS
+            },
             "per_window_turnover": {w: 0.0 for w in WINDOWS},
         }
 
@@ -495,10 +548,13 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         "B0",
         "B0 NOGUARD",
         "MARKOWITZ_BASE",
+        "MARKOWITZ_BASE_GUARD",
         "MCF",
         "SPY",
         "SP500_EW",
         "BMK_EXPO_GUARD",
+        "BMK_EXPO_NOGUARD",
+        "BMK_BETA",
         "BMK_VOL",
     ):
         item = horizons[name]
@@ -507,6 +563,7 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
             [
                 name,
                 _pct(np.mean([per[w]["cumulative_return"] for w in WINDOWS])),
+                _pct(item["corrected"]["cumulative_return"]),
                 _pct(item["corrected"]["cagr"]),
                 _num(item["corrected"]["sharpe"]),
                 _num(item["corrected"]["max_drawdown"]),
@@ -517,13 +574,25 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
             ]
         )
     lines.append(
-        "Columns: mean R over the six windows (first object), then the concatenated series "
-        "(second object). The continuous C1 object is in §5.2. The first object's R is the "
-        "mean of the six per-window cumulative returns, not a compounded series.\n"
+        "Columns: mean R over the six windows (first object), then the concatenated cumulative "
+        "return and the concatenated metrics (second object). The continuous C1 object is in "
+        "§5.2. The first object's R is the mean of the six per-window cumulative returns, not a "
+        "compounded series. Cost is the cumulative 10 bp cost over the six windows.\n"
     )
     lines.append(
         _table(
-            ["series", "mean R", "CAGR", "Sharpe", "MDD", "Calmar", "CVaR95", "days UW", "cost"],
+            [
+                "series",
+                "mean R",
+                "R concat",
+                "CAGR",
+                "Sharpe",
+                "MDD",
+                "Calmar",
+                "CVaR95",
+                "days UW",
+                "cost",
+            ],
             rows,
         )
     )
@@ -550,6 +619,7 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
     # 5.2 C1
     lines.append("### 5.2 Continuous window C1\n")
     c1_rows = []
+    c1_series: dict[str, dict[str, float]] = {}
     c1_available = (out / "runs" / "R8-FINAL-C1.json").is_file()
     for label, run_id, arm in (
         []
@@ -559,12 +629,15 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
             ("C1 FINAL NOGUARD", "R8-FINAL-C1", "TOPN_MV_NOGUARD"),
             ("C1 B0", "R8-B0-C1", "TOPN_MV_GUARD_NO_NLP"),
             ("C1 B0 NOGUARD", "R8-B0-C1", "TOPN_MV_NOGUARD"),
+            ("C1 MARKOWITZ_BASE", "R8-B0-C1", "MARKOWITZ_BASE"),
+            ("C1 MARKOWITZ_BASE_GUARD", "R8-B0-C1", "MARKOWITZ_BASE_GUARD"),
             ("C1 MCF", "R8-MCF-C1", "TOPN_MV_GUARD_NO_NLP"),
             ("C1 MCF NOGUARD", "R8-MCF-C1", "TOPN_MV_NOGUARD"),
         ]
     ):
         payload = load_run(out, run_id)
         r = arm_daily(payload, arm)
+        c1_series[label] = r
         item = metrics(r, payload["rf"])
         c1_rows.append(
             [
@@ -582,7 +655,6 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         spy_all_c1 = _spy_returns()
         c1_extra: list[tuple[str, dict[str, float]]] = []
         b0_c1_arm = load_run(out, "R8-B0-C1")
-        c1_extra.append(("C1 MARKOWITZ_BASE", arm_daily(b0_c1_arm, "MARKOWITZ_BASE")))
         c1_extra.append(
             (
                 "C1 SPY",
@@ -612,6 +684,7 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
                         )
                     )
         for label, values in c1_extra:
+            c1_series[label] = values
             item = metrics(values, b0_c1_arm["rf"])
             c1_rows.append(
                 [
@@ -635,12 +708,170 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
             f"MDD {final_c1_row[4]} vs {noguard_c1_row[4]}. The layer-4 scale statistics are in "
             "§13.1."
         )
+        ci_c1_rows = []
+        for label in (
+            "C1 FINAL",
+            "C1 FINAL NOGUARD",
+            "C1 B0",
+            "C1 MARKOWITZ_BASE",
+            "C1 MCF",
+            "C1 SPY",
+            "C1 BMK_EXPO_GUARD",
+        ):
+            ci = hac_mean_ci(c1_series[label], level=0.90)
+            ci_c1_rows.append(
+                [
+                    label,
+                    f"{100 * 252 * ci['mean']:+.2f}",
+                    f"{100 * 252 * ci['low']:+.2f}",
+                    f"{100 * 252 * ci['high']:+.2f}",
+                    str(len(c1_series[label])),
+                ]
+            )
+        lines.append("")
+        lines.append(
+            "HAC 90% confidence interval of the mean daily net return, annualised (pp/yr), "
+            "continuous C1:"
+        )
+        lines.append(_table(["series", "mean", "low", "high", "n"], ci_c1_rows))
+
+        pairs = [
+            ("B5 - B0", "B5", "B0"),
+            ("B5 - MARKOWITZ_BASE", "B5", "MARKOWITZ_BASE"),
+            ("B5 - MCF", "B5", "MCF"),
+            ("B5 - BMK_EXPO(GUARD)", "B5", "BMK_EXPO(GUARD)"),
+            ("B5 - FINAL NOGUARD", "B5", "FINAL NOGUARD"),
+            ("MCF - B0", "MCF", "B0"),
+        ]
+        concat_map = {
+            "B5": horizons["FINAL"]["concat"],
+            "B0": horizons["B0"]["concat"],
+            "MARKOWITZ_BASE": horizons["MARKOWITZ_BASE"]["concat"],
+            "MCF": horizons["MCF"]["concat"],
+            "BMK_EXPO(GUARD)": horizons["BMK_EXPO_GUARD"]["concat"],
+            "FINAL NOGUARD": horizons["FINAL NOGUARD"]["concat"],
+        }
+        c1_map = {
+            "B5": c1_series["C1 FINAL"],
+            "B0": c1_series["C1 B0"],
+            "MARKOWITZ_BASE": c1_series["C1 MARKOWITZ_BASE"],
+            "MCF": c1_series["C1 MCF"],
+            "BMK_EXPO(GUARD)": c1_series["C1 BMK_EXPO_GUARD"],
+            "FINAL NOGUARD": c1_series["C1 FINAL NOGUARD"],
+        }
+        hac_rows = []
+        reviewer: dict[str, dict[str, float]] = {}
+        lags = (10, 5, 21)
+        for object_name, series_map in (("concatenated", concat_map), ("C1", c1_map)):
+            for label, left, right in pairs:
+                for lag in lags:
+                    item = hac_mean_diff(series_map[left], series_map[right], lag=lag)
+                    if object_name == "concatenated" and lag == lags[0]:
+                        reviewer[label] = item
+                    hac_rows.append(
+                        [
+                            object_name,
+                            label,
+                            str(lag),
+                            f"{item['mean_annual_pp']:+.2f}",
+                            f"{item['t']:.2f}",
+                            f"{item['p_value']:.3f}",
+                            str(int(item["n"])),
+                        ]
+                    )
+        lines.append("")
+        lines.append(
+            "Paired Newey-West (Bartlett) tests of the daily net-return difference, lag 10 "
+            "(5 and 21 as sensitivity); mean difference annualised in pp/yr:"
+        )
+        lines.append(
+            _table(
+                ["object", "comparison", "lag", "mean pp/yr", "t", "p (two-sided)", "n"], hac_rows
+            )
+        )
+        lines.append(
+            "\nReviewer A's lag-10 concatenated check reproduces: "
+            f"B5-B0 {reviewer['B5 - B0']['mean_annual_pp']:+.2f} (p "
+            f"{reviewer['B5 - B0']['p_value']:.3f}); B5-MB "
+            f"{reviewer['B5 - MARKOWITZ_BASE']['mean_annual_pp']:+.2f} (p "
+            f"{reviewer['B5 - MARKOWITZ_BASE']['p_value']:.3f}); B5-MCF "
+            f"{reviewer['B5 - MCF']['mean_annual_pp']:+.2f} (p "
+            f"{reviewer['B5 - MCF']['p_value']:.3f}); B5-BMK_EXPO "
+            f"{reviewer['B5 - BMK_EXPO(GUARD)']['mean_annual_pp']:+.2f} (p "
+            f"{reviewer['B5 - BMK_EXPO(GUARD)']['p_value']:.3f}); MCF-B0 "
+            f"{reviewer['MCF - B0']['mean_annual_pp']:+.2f} (p "
+            f"{reviewer['MCF - B0']['p_value']:.3f})."
+        )
     else:
         lines.append(
             "The C1 run (R8) was still in flight at the plan's 8 h stop; no C1 number is "
             "reported. The three C1 copies are kept for a later continuation.\n"
         )
     lines.append("")
+
+    # 5.3 benchmarks
+    lines.append("### 5.3 Offline benchmarks\n")
+    if bench_raw:
+        benchmark_rows = []
+        benchmark_names = ("BMK_EXPO_GUARD", "BMK_EXPO_NOGUARD", "BMK_BETA", "BMK_VOL")
+        for name in benchmark_names:
+            for window in WINDOWS:
+                item = bench_raw.get(window, {}).get("statistics", {}).get(name)
+                if item is None:
+                    continue
+                benchmark_rows.append(
+                    [
+                        name,
+                        window,
+                        _pct(item["gross_return"]),
+                        _num(item["cost_bps"], 1),
+                        _pct(item["net_return"]),
+                        _num(item["turnover"], 2),
+                        _pct(item["mean_exposure"]),
+                    ]
+                )
+            gross = concatenate([bench_raw[w]["gross"][name] for w in WINDOWS])
+            net = concatenate([bench_raw[w]["series"][name] for w in WINDOWS])
+            cost = concatenate([bench_raw[w]["cost"][name] for w in WINDOWS])
+            exposure = concatenate([bench_raw[w]["exposure"][name] for w in WINDOWS])
+            days = sorted(net)
+            benchmark_rows.append(
+                [
+                    name,
+                    "concatenated",
+                    _pct(float(np.prod([1.0 + gross[day] for day in days]) - 1.0)),
+                    _num(10_000.0 * sum(cost.values()), 1),
+                    _pct(float(np.prod([1.0 + net[day] for day in days]) - 1.0)),
+                    _num(sum(cost.values()) / 0.001, 2),
+                    _pct(float(np.mean([exposure[day] for day in days]))),
+                ]
+            )
+            c1_item = bench_raw.get("C1", {}).get("statistics", {}).get(name)
+            if c1_item is not None:
+                benchmark_rows.append(
+                    [
+                        name,
+                        "C1",
+                        _pct(c1_item["gross_return"]),
+                        _num(c1_item["cost_bps"], 1),
+                        _pct(c1_item["net_return"]),
+                        _num(c1_item["turnover"], 2),
+                        _pct(c1_item["mean_exposure"]),
+                    ]
+                )
+        lines.append(
+            "Gross and net cumulative return, cumulative cost, turnover (sum of absolute "
+            "traded weight) and mean SPY weight. The net series are the §5 and §5.2 series."
+        )
+        lines.append(
+            _table(
+                ["benchmark", "object", "gross R", "cost bp", "net R", "turnover", "mean exposure"],
+                benchmark_rows,
+            )
+        )
+        lines.append("")
+    else:
+        lines.append("No benchmarks.json; the benchmark table is not reported.\n")
 
     # 6. stage A and B
     lines.append("## 6. Stage A and stage B on corrected data\n")
@@ -964,12 +1195,18 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
             )
         lines.append(_table(["PBO variant", "PBO", "mean IS best", "mean OOS best"], rows))
         lines.append("")
+        dsr_labels = {
+            "N_eff_eigen": "N_eff (eigen)",
+            "N_eff_clusters": "N_eff (clusters)",
+            "N30": "30",
+            "N55": "55",
+        }
         rows = []
         for key, dsr in family["dsr"].items():
             rows.append(
                 [
                     "FINAL (B5)",
-                    key.removeprefix("N"),
+                    dsr_labels.get(key, key),
                     _num(dsr["sharpe_annual"], 3),
                     _num(dsr["skew"], 3),
                     _num(dsr["kurtosis"], 3),
@@ -980,22 +1217,39 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         lines.append(
             _table(["series", "N", "SR annual", "skew", "kurtosis", "SR0 daily", "DSR"], rows)
         )
+        eig = family["effective_trials"]["eigen_participation"]
+        clusters = family["effective_trials"]["correlation_clusters_0.9"]
         lines.append(
             "The family matrix is the net return minus that session's French RF; the trial "
             "Sharpes, SR0, DSR and the PBO Sharpe variants use that excess matrix. FINAL (B5)'s "
             "excess Sharpe is **0.476** annual, and it is still the family's highest (B0 is next "
-            "at 0.434), so the best-configuration row is the same series. The Calmar PBO remains "
-            "on net returns, and the White RC differentials are unchanged."
+            "at 0.434), so the best-configuration row is the same series. The N_eff rows use "
+            f"the effective-trial counts (eigenvalue participation {eig:.2f}, floored at 2; "
+            f"correlation clusters {clusters:.0f}); N30 and N55 are the pre-registered counts "
+            "kept for comparison. The Calmar PBO remains on net returns; the White RC "
+            "differentials use net-return differences."
         )
         lines.append("")
         rows = []
         for key, emax in family["expected_max"].items():
-            rows.append([key, _num(emax["e_max_daily"], 5), _num(emax["e_max_annual"], 3)])
+            rows.append(
+                [
+                    dsr_labels.get(key, key),
+                    _num(emax["e_max_daily"], 5),
+                    _num(emax["e_max_annual"], 3),
+                ]
+            )
         lines.append(_table(["E[max]", "daily", "annual"], rows))
         lines.append("")
         for key, rc in family["white_rc_vs_markowitz"].items():
             lines.append(
                 f"White RC vs MARKOWITZ_BASE ({key}, mean block {rc['mean_block']:.0f}): best "
+                f"{rc['best']}, differential {rc['mean_differential_annual']:+.2f} pp/yr, "
+                f"p {rc['p_value']:.3f}.\n"
+            )
+        for key, rc in family.get("white_rc_vs_spy", {}).items():
+            lines.append(
+                f"White RC vs SPY ({key}, mean block {rc['mean_block']:.0f}): best "
                 f"{rc['best']}, differential {rc['mean_differential_annual']:+.2f} pp/yr, "
                 f"p {rc['p_value']:.3f}.\n"
             )
@@ -1044,7 +1298,7 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         )
     )
     lines.append("")
-    exit_rows = _exits_table(out)
+    exit_rows, exit_stats = _exits_table(out)
     lines.append("### 11.2 Every exit held, per arm and window\n")
     if exit_rows:
         tickers_held = sorted({row["ticker"] for row in exit_rows})
@@ -1060,7 +1314,11 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         )
     lines.append(
         f"The table lists **{len(exit_rows)}** held-exit records. The residual is the drifted "
-        "weight on the recognition session; the exit's cost is 10 bp times it.\n"
+        "weight on the recognition session; the exit's cost is 10 bp times it. Source URLs are "
+        "joined from `docs/exit_events.json` by (ticker, stint end), not copied from the run "
+        f"JSON: {exit_stats['joined']}/{exit_stats['rows']} rows joined, "
+        f"{exit_stats['missing']} missing, and **{exit_stats['old_accession']}** rows carry "
+        "accession 0001193125-23-249062.\n"
     )
     if exit_rows:
         lines.append(
@@ -1173,137 +1431,243 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
 
     # 12. MDD bootstrap
     lines.append("## 12. MDD bootstrap\n")
-    rows = []
-    for label, other in (
-        ("FINAL vs MARKOWITZ_BASE", horizons["MARKOWITZ_BASE"]["concat"]),
-        ("FINAL vs MCF", horizons["MCF"]["concat"]),
-        ("FINAL vs FINAL NOGUARD", horizons["FINAL NOGUARD"]["concat"]),
-        ("FINAL vs SPY", horizons["SPY"]["concat"]),
-        ("FINAL vs BMK_EXPO(GUARD)", horizons["BMK_EXPO_GUARD"]["concat"]),
-    ):
-        a = horizons["FINAL"]["concat"]
-        cells = []
-        for block in (5, 10, 21, 42):
-            cells.append(_num(block_mdd_diff(a, other, block=block)["p_value"], 3))
-        stationary10 = _num(stationary_mdd_diff(a, other, mean_block=10)["p_value"], 3)
-        stationary21 = _num(stationary_mdd_diff(a, other, mean_block=21)["p_value"], 3)
-        rows.append([label, *cells, stationary10, stationary21])
-    lines.append(
-        _table(["comparison", "b5", "b10", "b21", "b42", "stationary 10", "stationary 21"], rows)
+    concat_mdd = {
+        "FINAL": horizons["FINAL"]["concat"],
+        "MARKOWITZ_BASE": horizons["MARKOWITZ_BASE"]["concat"],
+        "MCF": horizons["MCF"]["concat"],
+        "FINAL NOGUARD": horizons["FINAL NOGUARD"]["concat"],
+        "SPY": horizons["SPY"]["concat"],
+        "BMK_EXPO(GUARD)": horizons["BMK_EXPO_GUARD"]["concat"],
+    }
+    comparisons = (
+        ("FINAL vs MARKOWITZ_BASE", "FINAL", "MARKOWITZ_BASE"),
+        ("FINAL vs MCF", "FINAL", "MCF"),
+        ("FINAL vs FINAL NOGUARD", "FINAL", "FINAL NOGUARD"),
+        ("FINAL vs SPY", "FINAL", "SPY"),
+        ("FINAL vs BMK_EXPO(GUARD)", "FINAL", "BMK_EXPO(GUARD)"),
     )
-    lines.append(
-        "\nEach p is a **two-sided paired bootstrap** of H0: dMDD = 0 against H1: dMDD != 0, "
-        "where dMDD = MDD(first) - MDD(second) on the same sessions. The p is the fraction of "
-        "resamples with |dMDD*| >= |observed| (plus one). A small p says the observed "
-        "difference is unlikely under no difference; the direction is the sign in the "
-        "comparison label, not the p."
-    )
-    if (out / "benchmarks.json").is_file() and (out / "runs" / "R8-FINAL-C1.json").is_file():
-        bench = json.loads((out / "benchmarks.json").read_text())["C1"]["series"]
-        final_c1 = load_run(out, "R8-FINAL-C1")
-        spy_all = _spy_returns()
-        c1_spy = {
-            day: spy_all[day] for day in final_c1["daily"]["TOPN_MV_GUARD_NO_NLP"] if day in spy_all
-        }
-        c1_series = {
-            "FINAL": arm_daily(final_c1, "TOPN_MV_GUARD_NO_NLP"),
-            "FINAL NOGUARD": arm_daily(final_c1, "TOPN_MV_NOGUARD"),
-            "MARKOWITZ_BASE": arm_daily(final_c1, "MARKOWITZ_BASE"),
-            "BMK_EXPO(GUARD)": {day: float(v) for day, v in bench["BMK_EXPO_GUARD"].items()},
-            "SPY": c1_spy,
-        }
-        if (out / "runs" / "R8-MCF-C1.json").is_file():
-            c1_series["MCF"] = arm_daily(load_run(out, "R8-MCF-C1"), "TOPN_MV_GUARD_NO_NLP")
-        c1_rows = []
-        for label, other in (
-            ("FINAL vs MARKOWITZ_BASE", c1_series["MARKOWITZ_BASE"]),
-            ("FINAL vs MCF", c1_series["MCF"]),
-            ("FINAL vs FINAL NOGUARD", c1_series["FINAL NOGUARD"]),
-            ("FINAL vs SPY", c1_series["SPY"]),
-            ("FINAL vs BMK_EXPO(GUARD)", c1_series["BMK_EXPO(GUARD)"]),
-        ):
-            a = c1_series["FINAL"]
-            cells = [
-                _num(block_mdd_diff(a, other, block=block)["p_value"], 3)
-                for block in (5, 10, 21, 42)
-            ]
-            stationary10 = _num(stationary_mdd_diff(a, other, mean_block=10)["p_value"], 3)
-            stationary21 = _num(stationary_mdd_diff(a, other, mean_block=21)["p_value"], 3)
-            c1_rows.append([label, *cells, stationary10, stationary21])
-        lines.append("")
-        lines.append("Continuous C1:")
-        lines.append(
-            _table(
-                ["comparison", "b5", "b10", "b21", "b42", "stationary 10", "stationary 21"],
-                c1_rows,
+    mdd_objects: list[tuple[str, dict[str, dict[str, float]]]] = [("concatenated", concat_mdd)]
+    if c1_available:
+        mdd_objects.append(
+            (
+                "C1",
+                {
+                    "FINAL": c1_series["C1 FINAL"],
+                    "MARKOWITZ_BASE": c1_series["C1 MARKOWITZ_BASE"],
+                    "MCF": c1_series["C1 MCF"],
+                    "FINAL NOGUARD": c1_series["C1 FINAL NOGUARD"],
+                    "SPY": c1_series["C1 SPY"],
+                    "BMK_EXPO(GUARD)": c1_series["C1 BMK_EXPO_GUARD"],
+                },
             )
         )
+    mdd_cache: dict[tuple[str, str], dict[str, dict[str, float]]] = {}
+    for object_name, series_map in mdd_objects:
+        for label, left, right in comparisons:
+            mdd_cache[(object_name, label)] = _mdd_schemes(series_map[left], series_map[right])
+
+    pivot_rows = []
+    for object_name, _ in mdd_objects:
+        for label, _, _ in comparisons:
+            values = mdd_cache[(object_name, label)]
+            pivot_rows.append(
+                [
+                    object_name,
+                    label,
+                    _num(values["b5"]["observed"], 4),
+                    *[_num(values[scheme]["p_value_pivot"], 3) for scheme in MDD_SCHEMES],
+                ]
+            )
+    lines.append(
+        "**Statistic.** dMDD = MDD(FINAL) - MDD(comparison) on the paired same-session sample. "
+        "**Primary p (pivot).** d*_null = d* - d_obs; p = (1 + #{|d*_null| >= |d_obs|}) / "
+        "(B + 1). **Sensitivity.** The same count after recentring on the bootstrap mean, "
+        "d* - mean(d*). **Resampling.** Paired same-session indices; fixed circular blocks "
+        "5/10/21/42 and Politis-Romano stationary blocks with mean length 10/21. "
+        "**Replicates and seed.** B = 4,999, seed = 7. **Bias.** d_obs and the bootstrap mean "
+        "of d* are reported; their gap is the resampling bias. MDD is nonlinear and the block "
+        "resampling biases its distribution, so these p-values are diagnostics, not exact "
+        "tests.\n"
+    )
+    lines.append("Primary (pivot) p-values:")
+    lines.append(
+        _table(
+            ["object", "comparison", "d_obs", *MDD_SCHEMES],
+            pivot_rows,
+        )
+    )
+    lines.append("")
+    mean_rows = []
+    for object_name, _ in mdd_objects:
+        for label, _, _ in comparisons:
+            values = mdd_cache[(object_name, label)]
+            mean_rows.append(
+                [
+                    object_name,
+                    label,
+                    _num(values["b5"]["observed"], 4),
+                    *[_num(values[scheme]["p_value_mean_centred"], 3) for scheme in MDD_SCHEMES],
+                ]
+            )
+    lines.append("Sensitivity (recentred on the bootstrap mean):")
+    lines.append(
+        _table(
+            ["object", "comparison", "d_obs", *MDD_SCHEMES],
+            mean_rows,
+        )
+    )
+    lines.append("")
+    bias_rows = []
+    for object_name, _ in mdd_objects:
+        for label, _, _ in comparisons:
+            values = mdd_cache[(object_name, label)]
+            bias_rows.append(
+                [
+                    object_name,
+                    label,
+                    *[_num(values[scheme]["bootstrap_mean"], 4) for scheme in MDD_SCHEMES],
+                ]
+            )
+    lines.append("Bootstrap mean of d* (the resampling bias is this minus d_obs):")
+    lines.append(_table(["object", "comparison", *MDD_SCHEMES], bias_rows))
     lines.append("")
 
     # 13. checks
     lines.append("## 13. Checks\n")
     lines.append("### 13.1 GUARD layers\n")
     guard_rows = []
+    layer3_used = 0
     for label, run_id, arm in (
-        ("FINAL GUARD", FINAL, "TOPN_MV_GUARD_NO_NLP"),
-        ("FINAL NOGUARD", FINAL, "TOPN_MV_NOGUARD"),
-        ("B0 GUARD", B0, "TOPN_MV_GUARD_NO_NLP"),
-        ("B0 NOGUARD", B0, "TOPN_MV_NOGUARD"),
-        ("MB GUARD", B0, "MARKOWITZ_BASE_GUARD"),
-        ("MB", B0, "MARKOWITZ_BASE"),
+        ("FINAL", FINAL, "TOPN_MV_GUARD_NO_NLP"),
+        ("B0", B0, "TOPN_MV_GUARD_NO_NLP"),
+        ("MARKOWITZ_BASE_GUARD", B0, "MARKOWITZ_BASE_GUARD"),
+        ("MCF", "R6-MCF", "TOPN_MV_GUARD_NO_NLP"),
     ):
-        actions = 0
-        layer_stats: dict[str, Any] = {}
-        mdds = []
-        rs = []
-        for window in WINDOWS:
-            payload = load_run(out, f"{run_id}-{window}")
+        for object_name in (*WINDOWS, "C1"):
+            c1_run = {"R1-B5": "R8-FINAL", "R1-B0": "R8-B0", "R6-MCF": "R8-MCF"}.get(run_id, run_id)
+            path = (
+                out
+                / "runs"
+                / (f"{c1_run}-C1.json" if object_name == "C1" else f"{run_id}-{object_name}.json")
+            )
+            if not path.is_file():
+                continue
+            payload = json.loads(path.read_text())
             summary = next(
-                (
-                    row
-                    for row in payload["summaries"]
-                    if row["arm"] == arm and row["segment"] == window
-                ),
+                (row for row in payload["summaries"] if row["arm"] == arm),
                 None,
             )
-            if summary is not None:
-                actions += int(summary["n_guard_actions"])
-                mdds.append(float(summary["max_drawdown"]))
-                rs.append(float(summary["cumulative_return"]))
-            for layer, stats in payload.get("layer_scales", {}).get(arm, {}).items():
-                current = layer_stats.setdefault(
-                    layer, {"sessions": 0, "min": 1.0, "sum": 0.0, "n": 0}
-                )
-                current["sessions"] += int(stats["sessions_scaled"])
-                current["min"] = min(current["min"], float(stats["min_scale"]))
-                current["sum"] += float(stats["mean_scale"])
-                current["n"] += 1
-        layer_text = (
-            ", ".join(
-                f"{layer}: {value['sessions']} sessions, mean {value['sum'] / max(value['n'], 1):.3f}, "
-                f"min {value['min']:.3f}"
-                for layer, value in sorted(layer_stats.items())
+            total = int(summary["n_guard_actions"]) if summary else 0
+            scales = payload.get("layer_scales", {}).get(arm, {})
+            layer3 = scales.get("layer3", {})
+            layer4 = scales.get("layer4", {})
+            l3 = int(layer3.get("sessions_scaled", 0))
+            l4 = int(layer4.get("sessions_scaled", 0))
+            l1 = max(0, total - l3 - l4)
+            if l3:
+                layer3_used += 1
+            configured = payload["params"].get("guard_layers")
+            guard_rows.append(
+                [
+                    label,
+                    object_name,
+                    str(configured),
+                    str(l1),
+                    str(l3),
+                    str(l4),
+                    "not active"
+                    if not layer3
+                    else f"{layer3['mean_scale']:.3f} / {layer3['min_scale']:.3f}",
+                    "not active"
+                    if not layer4
+                    else f"{layer4['mean_scale']:.3f} / {layer4['min_scale']:.3f}",
+                ]
             )
-            or "none"
-        )
-        guard_rows.append(
-            [
-                label,
-                "none"
-                if "NOGUARD" in label or label == "MB"
-                else str(payload["params"].get("guard_layers")),
-                str(actions),
-                _num(sum(mdds) / len(mdds) if mdds else 0.0),
-                _pct(sum(rs) / len(rs) if rs else 0.0),
-                layer_text,
-            ]
-        )
+    lines.append(
+        "Applied actions per layer (an applied action is an applied alert). Layers configured "
+        "are the run's `guard_layers`; layer 1 is name-level, layer 3 the volatility scale and "
+        "layer 4 the drawdown scale. The collector JSON stores applied actions only; §13.1a "
+        "adds the full alert-status counts for the retained DBs.\n"
+    )
     lines.append(
         _table(
-            ["arm", "configured layers", "actions", "mean MDD", "mean R", "layer 3/4 scales"],
+            [
+                "arm",
+                "object",
+                "configured",
+                "L1 actions",
+                "L3 actions",
+                "L4 actions",
+                "L3 mean / min",
+                "L4 mean / min",
+            ],
             guard_rows,
         )
     )
+    lines.append(
+        f"\nLayer 3 scaled exposure in **{layer3_used}** of the {len(guard_rows)} requested "
+        "arm/object rows: **never** for FINAL, B0, MARKOWITZ_BASE_GUARD or MCF. Their "
+        "`vol_target` is `fixed`, so layer 3 has no scale entry. Layer 3 does appear in some "
+        "diagnostic configurations outside this table (for example R2-Z3/Z4, R2-V0/V2/V4 and "
+        "several R4-B* runs), but not in the four report arms."
+    )
+    lines.append("")
+
+    lines.append("#### 13.1a Alert status counts, retained DBs\n")
+    status_order = ("APPLIED", "NOT_HELD", "SUPERSEDED", "ARM_DISABLED")
+    alert_rows = []
+    retained = (
+        ("P1", "R1-B5-P1", "FINAL", "TOPN_MV_GUARD_NO_NLP"),
+        ("H1", "R1-B5-H1", "FINAL", "TOPN_MV_GUARD_NO_NLP"),
+        ("P3", "R1-B5-P3", "FINAL", "TOPN_MV_GUARD_NO_NLP"),
+        ("H2", "R1-B5-H2", "FINAL", "TOPN_MV_GUARD_NO_NLP"),
+        ("P2", "R1-B5-P2", "FINAL", "TOPN_MV_GUARD_NO_NLP"),
+        ("H3", "R1-B5-H3", "FINAL", "TOPN_MV_GUARD_NO_NLP"),
+        ("C1", "R8-FINAL-C1", "FINAL", "TOPN_MV_GUARD_NO_NLP"),
+        ("P2", "R1-B0-P2", "B0", "TOPN_MV_GUARD_NO_NLP"),
+        ("P1", "R1-B5-P1", "MARKOWITZ_BASE_GUARD", "MARKOWITZ_BASE_GUARD"),
+        ("H1", "R1-B5-H1", "MARKOWITZ_BASE_GUARD", "MARKOWITZ_BASE_GUARD"),
+        ("P3", "R1-B5-P3", "MARKOWITZ_BASE_GUARD", "MARKOWITZ_BASE_GUARD"),
+        ("H2", "R1-B5-H2", "MARKOWITZ_BASE_GUARD", "MARKOWITZ_BASE_GUARD"),
+        ("P2", "R1-B5-P2", "MARKOWITZ_BASE_GUARD", "MARKOWITZ_BASE_GUARD"),
+        ("H3", "R1-B5-H3", "MARKOWITZ_BASE_GUARD", "MARKOWITZ_BASE_GUARD"),
+        ("C1", "R8-FINAL-C1", "MARKOWITZ_BASE_GUARD", "MARKOWITZ_BASE_GUARD"),
+    )
+    for object_name, run_id, arm_label, arm_code in retained:
+        db_path = out / "dbs" / f"{run_id}.db"
+        if not db_path.is_file():
+            continue
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            counts = {
+                (int(layer), str(status)): int(count)
+                for layer, status, count in conn.execute(
+                    "SELECT a.layer, g.status, COUNT(*) FROM guard_action g "
+                    "JOIN guard_alert a ON a.id = g.alert_id "
+                    "JOIN strategy_book b ON b.id = g.book_id "
+                    "WHERE b.arm_code = ? GROUP BY a.layer, g.status",
+                    (arm_code,),
+                )
+            }
+        finally:
+            conn.close()
+        for layer in (1, 3, 4):
+            row = [
+                object_name,
+                arm_label,
+                str(layer),
+                *[str(counts.get((layer, status), 0)) for status in status_order],
+            ]
+            if any(int(value) for value in row[3:]):
+                alert_rows.append(row)
+    lines.append(
+        "Counts of `guard_action` rows by layer and status, read-only from the retained DBs. "
+        "For B0 and MCF the other windows' DBs were deleted by the plan, so their per-status "
+        "alert counts are not recorded; their applied actions are in §13.1.\n"
+    )
+    lines.append(_table(["object", "arm", "layer", *status_order], alert_rows))
+    lines.append("")
+
     # Measured contribution: GUARD - NOGUARD per config.
     contribution = []
     for label, guard_run, guard_arm, noguard_run, noguard_arm in (
@@ -1367,6 +1731,65 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         "index; the two dates that change are **2023-01-12** and **2026-03-25**, both cash → "
         "invested (confirmed on the stored `spy_tr.json`).\n"
     )
+    lines.append("### 13.4 20 bp (R3) sensitivity\n")
+    r3_rows = []
+    for label, run_id, arm in (
+        ("FINAL", "R3-FINAL", "TOPN_MV_GUARD_NO_NLP"),
+        ("B0", "R3-B0", "TOPN_MV_GUARD_NO_NLP"),
+        ("MARKOWITZ_BASE", "R3-B0", "MARKOWITZ_BASE"),
+    ):
+        parts = []
+        rf_parts = []
+        mdds = []
+        for window in WINDOWS:
+            payload = load_run(out, f"{run_id}-{window}-20bp")
+            values = arm_daily(payload, arm)
+            parts.append(values)
+            rf_parts.append(payload["rf"])
+            mdds.append(metrics(values, payload["rf"])["max_drawdown"])
+        item = metrics(concatenate(parts), concatenate(rf_parts))
+        r3_rows.append(
+            [
+                label,
+                _pct(item["cumulative_return"]),
+                _num(float(np.mean(mdds)), 4),
+            ]
+        )
+    lines.append(
+        "Concatenated 20 bp return and the mean of the six per-window MDDs (R3). These rows "
+        "reproduce Reviewer C's check: 39.53%, 37.25% and 50.66%.\n"
+    )
+    lines.append(_table(["series", "R concat (20 bp)", "mean MDD"], r3_rows))
+    lines.append("")
+    # Appendix A. old vs new p-values, traceable.
+    lines.append("## Appendix A. MDD bootstrap, old vs new p-values\n")
+    appendix_rows = []
+    for object_name, _ in mdd_objects:
+        for label, _, _ in comparisons:
+            values = mdd_cache[(object_name, label)]
+            for scheme in MDD_SCHEMES:
+                appendix_rows.append(
+                    [
+                        object_name,
+                        label,
+                        scheme,
+                        _num(values[scheme]["p_value_legacy"], 3),
+                        _num(values[scheme]["p_value_pivot"], 3),
+                        _num(values[scheme]["p_value_mean_centred"], 3),
+                    ]
+                )
+    lines.append(
+        "`old` is the original uncentred |d*| >= |d_obs| count; `pivot` and `mean` are the "
+        "primary and sensitivity definitions in §12.\n"
+    )
+    lines.append(
+        _table(
+            ["object", "comparison", "scheme", "old", "pivot", "mean"],
+            appendix_rows,
+        )
+    )
+    lines.append("")
+
     return "\n".join(lines) + "\n"
 
 

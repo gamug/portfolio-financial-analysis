@@ -82,7 +82,7 @@ def _spy_returns(spy: dict[str, Any]) -> dict[str, float]:
 
 def _benchmark_expo(
     payload: dict[str, Any], arm: str, spy: dict[str, float], sessions: list[str]
-) -> dict[str, float]:
+) -> dict[str, dict[str, float]]:
     formation = str(payload["run"]["formation_date"])
     exposure = _exposure(payload, arm)
     decisions = _decision_dates(payload)
@@ -95,12 +95,18 @@ def _benchmark_expo(
     if current is None:
         prior = [d for d in decisions if d < formation]
         current = exposure.get(prior[-1], 1.0) if prior else 1.0
-    out: dict[str, float] = {}
+    net: dict[str, float] = {}
+    gross: dict[str, float] = {}
+    cost_series: dict[str, float] = {}
+    exposure_series: dict[str, float] = {}
     weight = current
     for day in sessions:
+        exposure_series[day] = weight
         if day == formation:
             cost = COST * abs(weight - 0.0)
-            out[day] = -cost
+            gross[day] = 0.0
+            cost_series[day] = cost
+            net[day] = -cost
             continue
         r_spy = spy.get(day, 0.0)
         port = weight * r_spy + (1.0 - weight) * 0.0
@@ -112,8 +118,10 @@ def _benchmark_expo(
             weight = target
         else:
             weight = drifted
-        out[day] = port - cost
-    return out
+        gross[day] = port
+        cost_series[day] = cost
+        net[day] = port - cost
+    return {"net": net, "gross": gross, "cost": cost_series, "exposure": exposure_series}
 
 
 def _ols_beta(asset: list[float], market: list[float]) -> float | None:
@@ -130,7 +138,7 @@ def _benchmark_beta(
     spy: dict[str, float],
     rf: dict[str, float],
     sessions: list[str],
-) -> dict[str, float]:
+) -> dict[str, dict[str, float]]:
     formation = str(final["run"]["formation_date"])
     decisions = _decision_dates(final)
     guard = _series(final["daily"]["TOPN_MV_GUARD_NO_NLP"])
@@ -148,10 +156,17 @@ def _benchmark_beta(
             # Before 126 sessions of FINAL history the weight is BMK_EXPO(GUARD)'s.
             updates[_execution_date(decision, sessions)] = expo_weights.get(decision, 1.0)
     weight = expo_weights.get(formation, 1.0)
-    out: dict[str, float] = {}
+    net: dict[str, float] = {}
+    gross: dict[str, float] = {}
+    cost_series: dict[str, float] = {}
+    exposure_series: dict[str, float] = {}
     for day in sessions:
+        exposure_series[day] = weight
         if day == formation:
-            out[day] = -COST * abs(weight)
+            cost = COST * abs(weight)
+            gross[day] = 0.0
+            cost_series[day] = cost
+            net[day] = -cost
             continue
         r_spy = spy.get(day, 0.0)
         port = weight * r_spy + (1.0 - weight) * rf.get(day, 0.0)
@@ -163,8 +178,10 @@ def _benchmark_beta(
             weight = target
         else:
             weight = drifted
-        out[day] = port - cost
-    return out
+        gross[day] = port
+        cost_series[day] = cost
+        net[day] = port - cost
+    return {"net": net, "gross": gross, "cost": cost_series, "exposure": exposure_series}
 
 
 def _stdev(values: list[float]) -> float:
@@ -177,7 +194,7 @@ def _benchmark_vol(
     spy: dict[str, float],
     rf: dict[str, float],
     sessions: list[str],
-) -> tuple[dict[str, float], int]:
+) -> tuple[dict[str, dict[str, float]], int]:
     formation = str(final["run"]["formation_date"])
     decisions = _decision_dates(final)
     guard = _series(final["daily"]["TOPN_MV_GUARD_NO_NLP"])
@@ -195,16 +212,41 @@ def _benchmark_vol(
             capped += 1
         updates[_execution_date(decision, sessions)] = k
     current = updates.get(formation, 1.0)
-    out: dict[str, float] = {formation: -COST * current}
+    net: dict[str, float] = {formation: -COST * current}
+    gross: dict[str, float] = {formation: 0.0}
+    cost_series: dict[str, float] = {formation: COST * current}
+    exposure_series: dict[str, float] = {formation: current}
     previous = current
     for day in sessions:
         if day == formation:
             continue
         target = updates.get(day, previous)
         cost = COST * abs(target - previous)
-        out[day] = target * mb.get(day, 0.0) + (1.0 - target) * rf.get(day, 0.0) - cost
+        gross[day] = target * mb.get(day, 0.0) + (1.0 - target) * rf.get(day, 0.0)
+        cost_series[day] = cost
+        net[day] = gross[day] - cost
+        exposure_series[day] = target
         previous = target
-    return out, capped
+    return (
+        {"net": net, "gross": gross, "cost": cost_series, "exposure": exposure_series},
+        capped,
+    )
+
+
+def _statistics(values: dict[str, dict[str, float]]) -> dict[str, float]:
+    days = sorted(values["net"])
+    net = np.asarray([values["net"][day] for day in days], dtype=float)
+    gross = np.asarray([values["gross"][day] for day in days], dtype=float)
+    cost = np.asarray([values["cost"][day] for day in days], dtype=float)
+    exposure = np.asarray([values["exposure"][day] for day in days], dtype=float)
+    return {
+        "gross_return": float(np.prod(1.0 + gross) - 1.0),
+        "net_return": float(np.prod(1.0 + net) - 1.0),
+        "cost_bps": float(10_000.0 * cost.sum()),
+        "turnover": float(cost.sum() / COST),
+        "mean_exposure": float(exposure.mean()),
+        "n": float(len(days)),
+    }
 
 
 def _sessions(payload: dict[str, Any]) -> list[str]:
@@ -246,13 +288,33 @@ def main(argv: list[str] | None = None) -> int:
         series = _window(final, b0, spy, rf)
         result[window] = {
             "metrics": {
-                name: _metrics(values, rf)
+                name: _metrics(values["net"], rf)
+                for name, values in series.items()
+                if not name.startswith("_")
+            },
+            "statistics": {
+                name: _statistics(values)
                 for name, values in series.items()
                 if not name.startswith("_")
             },
             "vol_capped_sessions": series["_vol_capped_sessions"]["n"],
             "series": {
-                name: {day: value for day, value in values.items()}
+                name: {day: value for day, value in values["net"].items()}
+                for name, values in series.items()
+                if not name.startswith("_")
+            },
+            "gross": {
+                name: {day: value for day, value in values["gross"].items()}
+                for name, values in series.items()
+                if not name.startswith("_")
+            },
+            "cost": {
+                name: {day: value for day, value in values["cost"].items()}
+                for name, values in series.items()
+                if not name.startswith("_")
+            },
+            "exposure": {
+                name: {day: value for day, value in values["exposure"].items()}
                 for name, values in series.items()
                 if not name.startswith("_")
             },
@@ -266,13 +328,33 @@ def main(argv: list[str] | None = None) -> int:
         series = _window(final_c1, b0_c1, spy, rf)
         result["C1"] = {
             "metrics": {
-                name: _metrics(values, rf)
+                name: _metrics(values["net"], rf)
+                for name, values in series.items()
+                if not name.startswith("_")
+            },
+            "statistics": {
+                name: _statistics(values)
                 for name, values in series.items()
                 if not name.startswith("_")
             },
             "vol_capped_sessions": series["_vol_capped_sessions"]["n"],
             "series": {
-                name: {day: value for day, value in values.items()}
+                name: {day: value for day, value in values["net"].items()}
+                for name, values in series.items()
+                if not name.startswith("_")
+            },
+            "gross": {
+                name: {day: value for day, value in values["gross"].items()}
+                for name, values in series.items()
+                if not name.startswith("_")
+            },
+            "cost": {
+                name: {day: value for day, value in values["cost"].items()}
+                for name, values in series.items()
+                if not name.startswith("_")
+            },
+            "exposure": {
+                name: {day: value for day, value in values["exposure"].items()}
                 for name, values in series.items()
                 if not name.startswith("_")
             },
