@@ -260,7 +260,9 @@ def test_the_driver_runs_the_pipeline_and_persists_every_m018_table(
 
     # The pipeline passed the §8 flags: --include-hard-vetoed on both, --cycle-run-id +
     # --risk-model-id on the Top-N book, one build-returns for the window.
-    assert sum(1 for c in calls if c[0] == "build-returns") == 1
+    builds = [c for c in calls if c[0] == "build-returns"]
+    assert len(builds) == 1
+    assert "--pit-members" in builds[0]
     # T-132: a member with no cover shares must not silently drop out of the panel.
     assert all("--allow-missing-caps" in c for c in calls if c[0] == "build-risk-model")
     optimizes = [c for c in calls if c[0] == "optimize"]
@@ -314,6 +316,32 @@ def test_the_driver_runs_the_pipeline_and_persists_every_m018_table(
         "GROUP BY book_id, date HAVING ABS(SUM(final_target_weight) - 1.0) > 1e-6"
     ).fetchall()
     assert sums == []
+    conn.close()
+
+
+def test_the_identity_replay_can_keep_the_old_as_of_panel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path, universe_path = _fixture(tmp_path)
+    params_path = _params_file(tmp_path)
+    conn = connect(db_path)
+    monkeypatch.setitem(driver.WINDOWS, "PX", ("2022-01-03", "2022-03-15"))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(driver, "run_quant", _fake_quant(conn, calls))
+    monkeypatch.setattr(driver, "run_replay", _fake_replay(conn))
+    monkeypatch.setattr(queries, "risk_model_asset_ids", lambda _c, _m: {1, 2}, raising=False)
+
+    run_backtest(
+        window_id="PX",
+        db_path=db_path,
+        universe_db_path=universe_path,
+        params_path=params_path,
+        warmup_steps=2,
+        returns_members="asof",
+    )
+    builds = [c for c in calls if c[0] == "build-returns"]
+    assert len(builds) == 1
+    assert "--pit-members" not in builds[0]
     conn.close()
 
 

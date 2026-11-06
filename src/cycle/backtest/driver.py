@@ -988,6 +988,7 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
     satellite_weighting: str = "minvar",
     guard_layers: Sequence[int] | None = None,
     vol_target: str = "fixed",
+    returns_members: str = "range",
 ) -> int:
     created = datetime.now(tz=UTC).isoformat(timespec="seconds")
     params_json = {
@@ -1005,6 +1006,7 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
         "satellite_weighting": satellite_weighting,
         "guard_layers": None if guard_layers is None else sorted(guard_layers),
         "vol_target": vol_target,
+        "returns_members": returns_members,
         "core_asset_id": core_asset_id,
         "core_series_path": None if series is None else str(series.path),
         "core_series_sha256": None if series is None else series.sha256,
@@ -1798,6 +1800,7 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     guard_layers: Sequence[int] | None = None,
     vol_target: str = "fixed",
     cost_bps: float | None = None,
+    returns_members: str = "range",
 ) -> dict[str, Any]:
     window = window_spec(window_id)
     database = Path(db_path).expanduser().resolve()
@@ -1818,6 +1821,8 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
         raise BacktestError(f"unknown tilt {tilt!r}: expected one of {sorted(defensive.TILTS)}")
     if not math.isfinite(core_weight) or not 0.0 <= core_weight < 1.0:
         raise BacktestError(f"core_weight must be in [0, 1), got {core_weight!r}")
+    if returns_members not in ("asof", "range"):
+        raise BacktestError(f"returns_members must be 'asof' or 'range', got {returns_members!r}")
     if trend_filter not in v2core.FILTERS:
         raise BacktestError(
             f"unknown trend_filter {trend_filter!r}: expected one of {list(v2core.FILTERS)}"
@@ -1901,11 +1906,19 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
             satellite_weighting=satellite_weighting,
             guard_layers=None if effective_layers is None else sorted(effective_layers),
             vol_target=vol_target,
+            returns_members=returns_members,
         )
         payload: dict[str, Any] = {}
         try:
             returns_report = run_quant(
-                ["build-returns", "--from", RETURNS_FROM, "--to", window.d_end],
+                [
+                    "build-returns",
+                    "--from",
+                    RETURNS_FROM,
+                    "--to",
+                    window.d_end,
+                    *(["--pit-members"] if returns_members == "range" else []),
+                ],
                 database,
                 universe,
             )
@@ -2298,6 +2311,14 @@ def build_parser() -> argparse.ArgumentParser:
         "omitted, the driver computes it from quant_return_daily",
     )
     run.add_argument(
+        "--returns-members",
+        default="range",
+        choices=("asof", "range"),
+        help="build-returns' asset selection: range (default; every PIT member on any session "
+        "of the window, leavers included) or asof (the old members-as-of-window-end panel, "
+        "kept for identity replays)",
+    )
+    run.add_argument(
         "--arms",
         default=None,
         help="comma-separated arm codes (default: BASE, NOGUARD and every GUARD arm the "
@@ -2409,6 +2430,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             else [int(part) for part in args.guard_layers.split(",") if part.strip()],
             vol_target=args.vol_target,
             cost_bps=args.cost_bps,
+            returns_members=args.returns_members,
         )
     except BacktestError as exc:
         print(f"cycle.backtest: {exc}", file=sys.stderr)
