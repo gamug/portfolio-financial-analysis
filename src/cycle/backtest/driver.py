@@ -31,7 +31,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from portfolio_common.db import Database
 
@@ -68,6 +68,8 @@ WINDOWS: dict[str, tuple[str, str]] = {
 STEP_SESSIONS = 21
 #: BACKTEST_SPEC §0's default warm-up.
 DEFAULT_WARMUP_STEPS = 12
+#: The covariance estimators quant accepts; the backtest default is the params file's value.
+COV_ESTIMATORS: Final = ("ledoit_wolf_cc", "ledoit_wolf_diag", "sample")
 #: BACKTEST_SPEC §2 step 1.
 RETURNS_FROM = "2019-01-02"
 #: The production data root no run may write under.
@@ -1831,6 +1833,7 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     db_path: str | Path,
     universe_db_path: str | Path,
     params_path: str | Path,
+    cov_estimator: str | None = None,
     warmup_steps: int = DEFAULT_WARMUP_STEPS,
     arms: Sequence[str] | None = None,
     blend: str = "B0",
@@ -1864,6 +1867,12 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     if not universe.is_file():
         raise BacktestError(f"--universe-db {universe} does not exist")
     params = load_params(params_path)
+    if cov_estimator is not None:
+        if cov_estimator not in COV_ESTIMATORS:
+            raise BacktestError(
+                f"cov_estimator must be one of {COV_ESTIMATORS}, got {cov_estimator!r}"
+            )
+        params = replace(params, cov_estimator=cov_estimator)
     exit_events = (
         exit_module.load_exit_table(exit_events_path) if exit_events_path is not None else []
     )
@@ -2340,6 +2349,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--db", required=True, help="a scratch copy of the financial database")
     run.add_argument("--universe-db", required=True, help="the read-only universe database")
     run.add_argument("--params", required=True, help="the params TOML")
+    run.add_argument(
+        "--cov-estimator",
+        default=None,
+        choices=list(COV_ESTIMATORS),
+        help="override the params file's covariance estimator (default: the params file, "
+        "ledoit_wolf_cc); recorded in params_json",
+    )
     run.add_argument("--warmup-steps", type=int, default=DEFAULT_WARMUP_STEPS)
     run.add_argument("--blend", default="B0", choices=sorted(defensive.BLENDS))
     run.add_argument("--tilt", default="T0", choices=sorted(defensive.TILTS))
@@ -2559,6 +2575,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             db_path=args.db,
             universe_db_path=args.universe_db,
             params_path=args.params,
+            cov_estimator=args.cov_estimator,
             warmup_steps=args.warmup_steps,
             arms=arms,
             blend=args.blend,

@@ -11,13 +11,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from cycle.backtest.driver import load_rf, next_session
 from cycle.backtest.exits import TERMINAL_RETURN
 from kg_schema import connect_ro
+from quant.db import load_covariance, load_risk_model_by_id
 
 #: A weight below this is not a holding (the engine's own order tolerance is 1e-12).
 _W_EPS = 1e-12
@@ -58,6 +62,7 @@ PARAM_KEYS = (
     "tilt_triggers",
     "market_series_sha256",
     "warmup_steps",
+    "cov_estimator",
     "cost_bps",
     "top_n",
     "returns_engine_version",
@@ -186,6 +191,74 @@ def _exit_records(conn: Any, books: dict[int, str], params: dict[str, Any]) -> l
     return out
 
 
+def _numerical_diagnostics(conn: Any, params: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Per-decision covariance and solver diagnostics for the MARKOWITZ_BASE books.
+
+    The covariance is the one stored by ``build-risk-model``; the status and solver are the
+    stored ``quant_portfolio`` row.  A non-finite condition number means the stored matrix is
+    singular; a solver other than CLARABEL is a fallback; relaxations are the recorded cap or
+    turnover relaxations; ``substitution`` means the stored estimator differs from the run's
+    requested one."""
+    requested = str(params.get("cov_estimator") or "ledoit_wolf_cc")
+    result: dict[str, list[dict[str, Any]]] = {}
+    for arm in ("MARKOWITZ_BASE", "MARKOWITZ_BASE_GUARD"):
+        rows = conn.execute(
+            "SELECT r.decision_date, r.execution_date, r.quant_portfolio_id, r.risk_model_id, "
+            "p.solver, p.status, p.params_json "
+            "FROM book_rebalance r JOIN strategy_book b ON b.id = r.book_id "
+            "JOIN quant_portfolio p ON p.id = r.quant_portfolio_id "
+            "WHERE b.arm_code = ? ORDER BY r.decision_date",
+            (arm,),
+        ).fetchall()
+        models: dict[int, dict[str, Any]] = {}
+        records: list[dict[str, Any]] = []
+        for row in rows:
+            model_id = int(row["risk_model_id"])
+            if model_id not in models:
+                model = load_risk_model_by_id(conn, model_id)
+                if model is None:
+                    raise SystemExit(f"risk model {model_id} is missing")
+                ids, sigma = load_covariance(conn, model_id)
+                condition = float("inf")
+                if ids:
+                    try:
+                        condition = float(np.linalg.cond(sigma))
+                    except np.linalg.LinAlgError:
+                        condition = float("inf")
+                models[model_id] = {
+                    "n_assets": int(model["n_assets"]),
+                    "condition_number": condition if math.isfinite(condition) else None,
+                    "condition_finite": bool(math.isfinite(condition)),
+                    "cov_estimator": str(model["cov_estimator"]),
+                    "cov_shrinkage": (
+                        None if model["cov_shrinkage"] is None else float(model["cov_shrinkage"])
+                    ),
+                }
+            model_values = models[model_id]
+            portfolio_params = json.loads(str(row["params_json"] or "{}"))
+            relaxations = portfolio_params.get("relaxations") or []
+            solver = str(row["solver"])
+            status = str(row["status"])
+            estimator = str(model_values["cov_estimator"])
+            records.append(
+                {
+                    "decision_date": str(row["decision_date"]),
+                    "execution_date": str(row["execution_date"]),
+                    "risk_model_id": model_id,
+                    "portfolio_id": int(row["quant_portfolio_id"]),
+                    **model_values,
+                    "solver": solver,
+                    "status": status,
+                    "solver_fallback": solver != "CLARABEL",
+                    "relaxations": relaxations,
+                    "substitution": estimator != requested,
+                    "optimal": status == "optimal",
+                }
+            )
+        result[arm] = records
+    return result
+
+
 def main(db: str, out: str) -> int:
     conn = connect_ro(Path(db).expanduser().resolve())
     try:
@@ -279,6 +352,7 @@ def main(db: str, out: str) -> int:
             "equity": _equity(conn, books),
             "layer_scales": _layer_scales(conn, books),
             "markowitz_weights_sha256": _markowitz_hash(conn),
+            "numerical_diagnostics": _numerical_diagnostics(conn, params),
         }
     finally:
         conn.close()

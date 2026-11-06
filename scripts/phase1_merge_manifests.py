@@ -29,6 +29,7 @@ FIELDS = [
     "exit",
     "seconds",
     "diagnostic_only",
+    "control",
     "output_json",
     "log",
     "db_retained",
@@ -71,6 +72,7 @@ def main(  # noqa: C901, PLR0912 - one merge path
             row["exit"] = "0"
             row["output_sha256"] = _sha256(json_path)
             row["config_sha256"] = _config_sha256(json.loads(json_path.read_text()))
+        row["control"] = "True" if row.get("block") == "R10" else "False"
         row["db_retained"] = "True" if (out / "dbs" / f"{run_id}.db").is_file() else "False"
         row.pop("db_kept", None)
     # Any collector JSON without a manifest row (a block killed before its writer flushed,
@@ -101,6 +103,7 @@ def main(  # noqa: C901, PLR0912 - one merge path
             "exit": "0",
             "seconds": "",
             "diagnostic_only": str(run_id.endswith("R2-Z2-P1") or "-Z2-" in run_id).lower(),
+            "control": "True" if block == "R10" else "False",
             "output_json": str(json_path),
             "log": "",
             "db_retained": "True" if (out / "dbs" / f"{run_id}.db").is_file() else "False",
