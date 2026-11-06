@@ -29,6 +29,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
+from cycle.backtest.exits import TerminalExit
 from cycle.guard import (
     Alert,
     GuardInput,
@@ -118,6 +119,9 @@ class EngineInput:
     bars: Mapping[str, Mapping[int, Bar]] = field(default_factory=dict)
     stop_distances: Mapping[str, Mapping[int, float]] = field(default_factory=dict)
     core_asset_id: int | None = None
+    #: Phase 1 §1.1: the declared terminal value of every asset whose PIT stint ends.  An
+    #: asset with no entry keeps the pre-existing data-gap rule (0 and liquidate).
+    exits: Mapping[int, TerminalExit] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -259,27 +263,67 @@ class _Book:
         return self.spec.guard is not None
 
     def mark_to_market(
-        self, date: str, returns: Mapping[int, float], rf: float
-    ) -> tuple[float, dict[int, float], float, set[int]]:
+        self,
+        date: str,
+        returns: Mapping[int, float],
+        rf: float,
+        exits: Mapping[int, TerminalExit],
+    ) -> tuple[float, dict[int, float], float, set[int], set[int]]:
         """Step 1: drift the book through *date*.
 
-        Returns ``(gross, drifted, drifted_cash, missing)``. A held asset without a return is
-        valued at its last close (return 0) and listed in *missing*: the caller moves it to
-        cash at the close (spec §0)."""
+        Returns ``(gross, drifted, drifted_cash, missing, frozen)``. A held asset without a
+        return is valued at its last close (return 0) and listed in *missing*: the caller
+        moves it to cash at the close (spec §0).  Phase 1 §1.1 refines the value for an asset
+        whose PIT stint ends: its declared ``terminal_return`` is applied on the recognition
+        session (the first held session after its last stored return, or a later documented
+        distribution date), and a suspension (or the period before a documented distribution)
+        is *frozen*: no return, no trade, no cost."""
         gross = self.cash * rf
         missing: set[int] = set()
+        frozen: set[int] = set()
+        applied: dict[int, float] = {}
         for asset_id, weight in self.weights.items():
+            policy = exits.get(asset_id)
+            if policy is not None and policy.force and policy.recognised_on == date:
+                # A continuing series (ILMN re-enters in 2026): the mandate still sells at the
+                # close of the stint's last session, so the recognition session overrides any
+                # return row and the residual goes to cash.
+                missing.add(asset_id)
+                terminal = policy.terminal_return
+                forced_return = 0.0 if terminal is None else terminal
+                applied[asset_id] = forced_return
+                gross += weight * forced_return
+                continue
             ret = returns.get(asset_id)
             if ret is None:
                 missing.add(asset_id)
-                ret = 0.0
+                if policy is not None and (
+                    policy.frozen
+                    or (policy.recognised_on is not None and date < policy.recognised_on)
+                ):
+                    frozen.add(asset_id)
+                    ret = 0.0
+                elif policy is not None and policy.terminal_return is not None:
+                    # A standard exit carries its recognition session in ``recognised_on``;
+                    # a None here means "the first held session without a return".
+                    if policy.recognised_on is None or date >= policy.recognised_on:
+                        ret = policy.terminal_return
+                    else:
+                        frozen.add(asset_id)
+                        ret = 0.0
+                else:
+                    ret = 0.0
+            applied[asset_id] = ret
             gross += weight * ret
         if gross <= -1.0:
             raise EngineError(f"{self.spec.code}: session {date} wipes the book out ({gross=})")
         scale = 1.0 + gross
-        drifted = {a: w * (1.0 + returns.get(a, 0.0)) / scale for a, w in self.weights.items()}
+        # ``applied`` carries the terminal value the loop above chose (0 for a data gap or a
+        # frozen name, the declared value on a recognition session), never the raw missing
+        # ``None``.  Its residual weight is therefore ``w (1 + r_term) / (1 + r_p)``.
+        drifted = {a: w * (1.0 + applied.get(a, 0.0)) / scale for a, w in self.weights.items()}
         drifted_cash = self.cash * (1.0 + rf) / scale
-        return gross, drifted, drifted_cash, missing
+        return gross, drifted, drifted_cash, missing, frozen
 
 
 def _benchmark_returns(inp: EngineInput, sessions: Sequence[str]) -> dict[str, float]:
@@ -371,24 +415,36 @@ def _asset_return_window(
     return list(series[start : index + 1])
 
 
-def _execute(
+def _execute(  # noqa: PLR0913, PLR0917 - the order's inputs, all named
     drifted: Mapping[int, float],
     target: Mapping[int, float] | None,
     missing: set[int],
     returns: Mapping[int, float],
     cost_bps: float,
+    frozen: set[int] | None = None,
 ) -> tuple[dict[int, float], float, float]:
     """Step 2: one net order at the close. Returns ``(weights, turnover, cost)``.
 
     A target asset with no return on the session cannot be priced at the close: it is dropped
     to cash (the same data-gap rule as a held name). With no pending target, only the missing
-    names are liquidated; the rest of the book is untouched."""
-    if target is None:
-        wanted = {a: w for a, w in drifted.items() if a not in missing}
+    names are liquidated; the rest of the book is untouched.  A *frozen* position cannot be
+    traded: with a pending target it keeps its drifted weight and the tradable target is
+    scaled to ``1 - frozen weight`` so the book stays fully invested without selling it; with
+    no target it simply drifts and is never charged."""
+    frozen = frozen or set()
+    frozen_weights = {a: drifted[a] for a in frozen if a in drifted}
+    if target is not None:
+        wanted = {a: w for a, w in target.items() if a in returns and a not in frozen}
+        if frozen_weights:
+            scale = max(0.0, 1.0 - sum(frozen_weights.values()))
+            wanted = {a: w * scale for a, w in wanted.items() if w * scale > 0.0}
+            wanted.update(frozen_weights)
     else:
-        wanted = {a: w for a, w in target.items() if a in returns}
+        # No decision at this close: only a missing *and tradable* name is moved to cash; a
+        # frozen name and the rest of the book simply drift.
+        wanted = {a: w for a, w in drifted.items() if a not in missing or a in frozen}
     keys = set(wanted) | set(drifted)
-    turnover = sum(abs(wanted.get(a, 0.0) - drifted.get(a, 0.0)) for a in keys)
+    turnover = sum(abs(wanted.get(a, 0.0) - drifted.get(a, 0.0)) for a in keys if a not in frozen)
     if turnover <= WEIGHT_TOL:
         return dict(drifted), 0.0, 0.0
     return wanted, turnover, cost_bps / 10_000.0 * turnover
@@ -638,11 +694,14 @@ def simulate(inp: EngineInput) -> EngineResult:  # noqa: C901, PLR0912, PLR0915
                 drifted: dict[int, float] = {}
                 drifted_cash = 1.0
                 missing: set[int] = set()
+                frozen: set[int] = set()
             else:
-                gross, drifted, drifted_cash, missing = book.mark_to_market(date, day_returns, rf)
+                gross, drifted, drifted_cash, missing, frozen = book.mark_to_market(
+                    date, day_returns, rf, inp.exits
+                )
             pending_target = book.pending
             weights, turnover, cost = _execute(
-                drifted, pending_target, missing, day_returns, inp.cost_bps
+                drifted, pending_target, missing, day_returns, inp.cost_bps, frozen
             )
             if pending_target is not None or missing:
                 executed = weights

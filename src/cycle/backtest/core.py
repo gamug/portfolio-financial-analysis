@@ -26,6 +26,9 @@ TREND_WINDOW: Final = 210
 FILTER_OFF: Final = "off"
 FILTER_ON: Final = "on"
 FILTERS: Final = (FILTER_OFF, FILTER_ON)
+#: Phase 1 §1.3: the series the 210-session signal reads.  ``tr`` is the total-return index
+#: (Faber 2013, p. 15); ``price`` is the split-adjusted close and exists only for the ladder.
+FILTER_SERIES: Final = ("tr", "price")
 #: The core's two sources (V3 plan §2b): the SPY ETF, or the MARKOWITZ_BASE target itself.
 CORE_SOURCES: Final = ("spy", "base")
 #: The manifest key the file's sha256 must equal.
@@ -126,6 +129,27 @@ def load_core_series(path: str | Path) -> CoreSeries:
         close=close,
         total_return=total_return,
     )
+
+
+def total_return_index(total_return: Mapping[str, float]) -> dict[str, float]:
+    """The total-return index built from ``spy_tr.json``'s daily total returns.
+
+    ``TR_t = TR_{t-1} (1 + r_t)`` with ``TR`` starting at 1.0 on the first session.  Faber
+    (2013, p. 15) computes the 10-month signal on total-return series; the level's base does
+    not affect the comparison with its own mean, so 1.0 is arbitrary but fixed.  A missing
+    return (the file's first session has none) contributes 0.0 and keeps the level.
+    """
+    if not total_return:
+        raise CoreSeriesError("total_return_index needs at least one session")
+    out: dict[str, float] = {}
+    level = 1.0
+    for day in sorted(total_return):
+        value = float(total_return[day])
+        if not math.isfinite(value):
+            raise CoreSeriesError(f"total return {value!r} on {day} is not finite")
+        level *= 1.0 + value
+        out[day] = level
+    return out
 
 
 def trend_trigger(

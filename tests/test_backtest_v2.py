@@ -269,3 +269,32 @@ def test_the_core_loader_refuses_a_file_that_does_not_match_its_manifest(
     manifest.unlink()
     with pytest.raises(core.CoreSeriesError):
         core.load_core_series(path)
+
+
+# -- Phase 1 §1.3: the filter's total-return series -------------------------------------------
+
+
+def test_the_total_return_index_compounds_the_daily_total_returns() -> None:
+    returns = {"2024-01-02": 0.0, "2024-01-03": 0.10, "2024-01-04": -0.05}
+    levels = core.total_return_index(returns)
+    assert levels["2024-01-02"] == pytest.approx(1.0)
+    assert levels["2024-01-03"] == pytest.approx(1.10)
+    assert levels["2024-01-04"] == pytest.approx(1.10 * 0.95)
+
+
+def test_the_filter_reads_the_total_return_index_when_asked() -> None:
+    # A price series that falls below its 210-session mean while the total-return series stays
+    # above its own: the two inputs disagree, so ``filter_series`` is a real choice.
+    sessions = [f"d{index:04d}" for index in range(210)]
+    price = {day: 100.0 for day in sessions[:-1]}
+    price[sessions[-1]] = 80.0
+    total_return = {day: 0.0 for day in sessions}
+    total_return[sessions[-1]] = 0.05  # a 5 % up day, after a flat history
+    levels = core.total_return_index(total_return)
+    assert core.trend_trigger(price, sessions[-1]) is True
+    assert core.trend_trigger(levels, sessions[-1]) is False
+
+
+def test_a_missing_decision_date_is_a_gap_not_an_off_signal() -> None:
+    with pytest.raises(core.CoreSeriesError, match="no close at decision date"):
+        core.trend_trigger({}, "2024-01-02")

@@ -126,6 +126,11 @@ class QuantSettings(BaseModel):
     # frontier_k, estimator, optimizer engine and inputs). None (the default) is off: no book changes.
     turnover_cap: float | None = None
     solver: str = "CLARABEL"
+    #: Phase 1 §1.2: the units of the min-CVaR scenario matrix.  Rockafellar & Uryasev's
+    #: loss ``f(x, y) = -x'y`` is linear in *simple* returns; the risk model stores log total
+    #: returns, so the default converts them with ``expm1``.  ``log`` exists only for the
+    #: correction ladder (``L1``/``L2``).
+    cvar_scenarios: str = "simple"
 
     # --- append-only engine-version knobs ---
     corpact_engine_version: str = "corpact-v1"

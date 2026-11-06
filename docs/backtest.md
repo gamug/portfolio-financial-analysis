@@ -461,7 +461,7 @@ uv run python -m cycle.backtest export \
    documented in `docs/model_fixes.md`). A delisting return (often very negative) is still not
    added, which biases every arm upward by the missing delisting return on the names that leave
    during a window. A corrective 18-run batch was kept under
-   `/workspaces/thesis/scratch/final/out/pitfix/runs/`, but reviewer A's 2026-11-06 scope change
+   `/workspaces/thesis/scratch/final/out/pitfix/runs/`, but reviewer A's 2026-11-05 scope change
    supersedes it before any interpretation; no Shumway sensitivity is applied here.
 4. **Layer 2 (news) is off.** `nlp.db`'s labels come from `gamug/FinBERT-financial-news`, whose
    training pool includes 2022–2026 (F1), so the model cannot be used for a 2022–2025 backtest; arm
@@ -620,3 +620,50 @@ check are in [`docs/backtest_v2_results.md`](backtest_v2_results.md), generated 
 The SPY total-return file is a scratch artifact (sha256 `58b91870...`), refused unless its sha256
 matches `manifest.json` beside it; only window aggregates are committed. v1's results and docs are
 unchanged, and no model call was made in this round.
+
+## 12. Phase 1 -- the corrections on the point-in-time panel
+
+`PHASE1_REBUILD_PLAN.md` (reviewer A, 2026-11-05) applies five corrections on top of the PIT
+return panel (PR #194). Every run uses the corrected templates under
+`/workspaces/thesis/scratch/final/out/pitfix/templates/` (sha256 in `SHA256SUMS`) and the five
+corrections; no parameter, weight or threshold other than the five is changed.
+
+1. **Exit terminal values.** `docs/exit_events.json` is the public table of the 96 stints that
+   end between 2022-01-03 and 2026-10-15 (ticker, asset id, stint end, last return session,
+   type, valuation basis, source URL, note; no per-asset return). The terminal return is a code
+   constant per basis: `observed_last_close` / `approximation_last_close` 0,
+   `documented_worthless` −1.0 (Shumway 1997, Table V, line 3), `imputed_reference` −0.299
+   (line 5), `unobservable_frozen` frozen and not tradable, and `documented_recovery` from the
+   private file `/workspaces/thesis/data/private/exit_recoveries.json` (sha256 in the run
+   manifest, never in the repo). The engine applies the terminal return on the recognition
+   session to the drifted weight, then liquidates the residual `w (1 + r_term) / (1 + r_p)` and
+   pays 10 bp on it; a −1.0 position has residual 0 and pays no cost. `--exit-events` is the
+   driver seam; the table is validated before any write and an `unknown` row is refused.
+   ILMN's continuing series (it rejoins in 2026) carries an explicit recognition date, so a held
+   position is sold at the 2024 exit close; this is the one case where the panel's series does
+   not end at the exit. The three bank failures are `imputed_reference` (the FDIC releases
+   document the receivership, not the equity's terminal value) and the REPORT gives the 0 / −1
+   sensitivity.
+2. **Min-CVaR scenarios in simple returns.** The LP's loss is linear in simple returns, so the
+   stored `tr_log_return` panel is converted with `np.expm1` for the min-CVaR objective (B5 and
+   the CVaR member of B6). `--cvar-scenarios log` keeps the old matrix for the correction
+   ladder only; the default is `simple`. Covariance estimation is unchanged.
+3. **The trend filter's input is total return.** The 210-session Faber signal reads the total
+   return index built from `spy_tr.json` (`TR_t = TR_{t-1}(1 + r_t)`), not the split-adjusted
+   close. `--filter-series price` keeps the old input for the ladder; the default is `tr`.
+4. **The continuous window C1.** `WINDOWS["C1"] = ("2022-01-03", "2026-10-15")`: one
+   formation, one `E_k = D1 + 21k` grid, one NAV path per arm, GUARD state carried through,
+   warm-up as P1, the PIT panel over the whole range and the same exit policy. The change is
+   local to the driver's window table.
+5. **MARKOWITZ_CORE_FILTER (MCF).** `quant optimize --pool-all` sizes the min-variance book on
+   every asset in the stored risk model's panel (the MARKOWITZ_BASE universe, hard-vetoed names
+   included) through the same solve and ≤ 30-name second pass as the cycle-pool book: name cap
+   1.5/30 = 5 %, sector cap 30 %, persisted as `kind = "min_var_mcf"`. The driver's
+   `--pool-mode universe` then applies the same core blend, total-return filter with exit 0.5,
+   10 bp costs and GUARD [1, 3, 4] with Basing Points on the satellite.
+
+The ablation (`--guard-layers 4`) is a supported non-empty subset of {1, 3, 4}. Every run is a
+fresh copy of one window's template; the production databases are read-only and their sha256 is
+recorded before and after the phase. The results, the correction ladder and the overfitting
+diagnostics are in `/workspaces/thesis/scratch/final/out/phase1/REPORT.md`; no new selection is
+made there.

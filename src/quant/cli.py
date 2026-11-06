@@ -242,6 +242,14 @@ def _add_optimize_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser
         "(needs --risk-model-id; BACKTEST_SPEC §8.2)",
     )
     op.add_argument(
+        "--pool-all",
+        dest="pool_all",
+        action="store_true",
+        help="Phase 1 section 1.5: size the book on every asset in the risk model's panel "
+        "(MARKOWITZ_CORE_FILTER), with the same caps and second pass; needs --risk-model-id "
+        "and no --cycle-run-id",
+    )
+    op.add_argument(
         "--risk-model-id",
         dest="risk_model_id",
         type=int,
@@ -264,7 +272,16 @@ def _add_optimize_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser
         choices=("minvar", "rp", "ew", "vt", "maxdiv", "hrp", "mincvar", "ensemble"),
         default="minvar",
         help="V4 plan section 2b / final round section 3: the satellite weighting on the "
-        "names minvar holds (default minvar)",
+        "names minvar holds (default minvar); Phase 1 section 1.2: the min-CVaR member reads "
+        "simple returns unless --cvar-scenarios log",
+    )
+    op.add_argument(
+        "--cvar-scenarios",
+        dest="cvar_scenarios",
+        choices=("simple", "log"),
+        default=None,
+        help="Phase 1 section 1.2: units of the min-CVaR scenario matrix (default: the "
+        "setting's simple; log exists only for the correction ladder)",
     )
     op.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     op.add_argument("--returns-version", dest="returns_version", help=_RETURNS_VERSION_HELP)
@@ -406,6 +423,7 @@ _FLAG_TO_FIELD: dict[str, tuple[str, object]] = {
     "max_sector_weight": ("max_sector_weight", float),
     "turnover_cap": ("turnover_cap", float),
     "solver": ("solver", str),
+    "cvar_scenarios": ("cvar_scenarios", str),
     "market_cap_max_share_age_days": ("market_cap_max_share_age_days", int),
 }
 
@@ -554,7 +572,7 @@ def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: boo
     return 0
 
 
-def _run_optimize(  # noqa: PLR0913 - the run inputs, all named
+def _run_optimize(  # noqa: PLR0913, PLR0911 - the run inputs, all named
     settings: QuantSettings,
     as_of: str,
     *,
@@ -562,14 +580,22 @@ def _run_optimize(  # noqa: PLR0913 - the run inputs, all named
     risk_model_id: int | None = None,
     pool_size: int = 30,
     satellite_weighting: str = "minvar",
+    cvar_scenarios: str = "simple",
+    pool_all: bool = False,
 ) -> int:
-    if (cycle_run_id is None) != (risk_model_id is None):
+    if pool_all and risk_model_id is None:
+        print("optimize: --pool-all needs --risk-model-id", file=sys.stderr)
+        return 1
+    if pool_all and cycle_run_id is not None:
+        print("optimize: --pool-all and --cycle-run-id are mutually exclusive", file=sys.stderr)
+        return 1
+    if not pool_all and (cycle_run_id is None) != (risk_model_id is None):
         print(
             "optimize: --cycle-run-id and --risk-model-id must be given together",
             file=sys.stderr,
         )
         return 1
-    if cycle_run_id is not None and risk_model_id is not None:
+    if risk_model_id is not None:
         try:
             top = run_optimize_topn(
                 settings,
@@ -578,6 +604,8 @@ def _run_optimize(  # noqa: PLR0913 - the run inputs, all named
                 risk_model_id=risk_model_id,
                 pool_size=pool_size,
                 satellite_weighting=satellite_weighting,
+                cvar_scenarios=cvar_scenarios,
+                universe_pool=pool_all,
             )
         except (
             VersionError,
@@ -591,9 +619,14 @@ def _run_optimize(  # noqa: PLR0913 - the run inputs, all named
         ) as exc:
             print(f"optimize: {exc}", file=sys.stderr)
             return 1
+        source = (
+            f"from cycle run {top.cycle_run_id}"
+            if top.cycle_run_id is not None
+            else "from the whole PIT panel"
+        )
         print(
-            f"optimize @ {top.as_of} (model {top.model_id}): min_var_topn #{top.portfolio_id} "
-            f"from cycle run {top.cycle_run_id}, {top.n_positions} positions, status {top.status}"
+            f"optimize @ {top.as_of} (model {top.model_id}): {top.kind} #{top.portfolio_id} "
+            f"{source}, {top.n_positions} positions, status {top.status}"
         )
         payload = {
             "portfolio_id": top.portfolio_id,
@@ -914,6 +947,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0911 - one
             risk_model_id=args.risk_model_id,
             pool_size=args.pool_size,
             satellite_weighting=args.satellite_weighting,
+            cvar_scenarios=args.cvar_scenarios or settings.cvar_scenarios,
+            pool_all=args.pool_all,
         )
 
     if args.command == "benchmark":

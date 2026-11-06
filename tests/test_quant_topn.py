@@ -497,3 +497,54 @@ def test_a_pool_over_30_keeps_the_30_largest_and_re_solves_on_them(
     assert params["first_pass_n"] == 32
     assert params["second_pass"] is True
     assert params["final_n"] == 30
+
+
+# -- Phase 1 §1.5: the MARKOWITZ_CORE_FILTER pool ---------------------------------------------
+
+
+def test_the_mcf_book_takes_the_whole_panel_with_the_same_caps_and_second_pass(
+    ready: tuple[Database, str, int],
+) -> None:
+    conn, as_of, model_id = ready
+    panel = [
+        int(row[0]) for row in conn.execute("SELECT DISTINCT asset_id FROM quant_return_daily")
+    ]
+    res = run_optimize_topn(
+        _book_settings(),
+        as_of=as_of,
+        cycle_run_id=None,
+        risk_model_id=model_id,
+        universe_pool=True,
+        conn=conn,
+    )
+    assert res.kind == "min_var_mcf"
+    assert res.cycle_run_id is None
+    assert res.pool_size == len(panel)
+    assert res.n_positions <= 30  # the ≤ 30-name second pass
+    assert res.first_pass_n >= res.n_positions
+    weights = load_book_weights(conn, res.portfolio_id)
+    assert set(weights) <= set(panel)
+    assert sum(weights.values()) == pytest.approx(1.0, abs=1e-6)
+    assert max(weights.values()) <= 0.05 + 1e-6  # name cap 1.5 / 30
+    row = conn.execute(
+        "SELECT kind, params_json FROM quant_portfolio WHERE id = ?", (res.portfolio_id,)
+    ).fetchone()
+    assert row["kind"] == "min_var_mcf"
+    params = json.loads(row["params_json"])
+    assert params["pool_mode"] == "universe"
+    assert params["cycle_run_id"] is None
+    assert params["selection_count"] == len(panel)
+
+
+def test_the_mcf_book_refuses_a_cycle_pool_argument(ready: tuple[Database, str, int]) -> None:
+    conn, as_of, model_id = ready
+    cyc = _add_cycle_run(conn, as_of, list(range(1, SELECTED + 1)))
+    with pytest.raises(CycleSelectionError, match="drop --cycle-run-id"):
+        run_optimize_topn(
+            _book_settings(),
+            as_of=as_of,
+            cycle_run_id=cyc,
+            risk_model_id=model_id,
+            universe_pool=True,
+            conn=conn,
+        )
