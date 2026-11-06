@@ -15,7 +15,6 @@ from typing import Any
 import numpy as np
 from phase1_stats import WINDOWS, arm_daily, concatenate, load_run, metrics
 
-R_THRESHOLD = 0.8446  # the Stage A/B rule's absolute R bar (final-round plan §2)
 MDD_THRESHOLD = 0.0831
 TIE = 0.001
 
@@ -32,6 +31,14 @@ def _concat(
     return concatenate(parts), concatenate(rf_parts)
 
 
+def _mean_cum(out: Path, run_id: str, arm: str) -> float:
+    values = []
+    for window in WINDOWS:
+        payload = load_run(out, f"{run_id}-{window}")
+        values.append(metrics(arm_daily(payload, arm), payload["rf"])["cumulative_return"])
+    return float(np.mean(values))
+
+
 def _mean_mdd(out: Path, run_id: str, arm: str) -> float:
     values = []
     for window in WINDOWS:
@@ -41,84 +48,92 @@ def _mean_mdd(out: Path, run_id: str, arm: str) -> float:
 
 
 def _stage(out: Path) -> dict[str, Any]:
-    z_configs = ["Z1", "Z2", "Z3", "Z4"]
+    """The pre-registered rule on the corrected panel.
+
+    ``R`` is the ratio mean cumulative return / mean MDD over the six windows (the final-round
+    plan's R; Y2's old value was 0.8446).  The threshold is the corrected Y2 ratio.
+    """
     z_rows = []
-    for config in z_configs:
+    for config in ("Z1", "Z2", "Z3", "Z4"):
         run_id = f"R2-{config}"
-        concat, rf = _concat(out, run_id, "TOPN_MV_GUARD_NO_NLP")
-        item = metrics(concat, rf)
+        mean_cum = _mean_cum(out, run_id, "TOPN_MV_GUARD_NO_NLP")
+        mean_mdd = _mean_mdd(out, run_id, "TOPN_MV_GUARD_NO_NLP")
         z_rows.append(
             {
                 "config": config,
-                "R": item["cumulative_return"],
-                "mean_mdd": _mean_mdd(out, run_id, "TOPN_MV_GUARD_NO_NLP"),
+                "mean_cumulative_return": mean_cum,
+                "mean_mdd": mean_mdd,
+                "R": mean_cum / mean_mdd if mean_mdd > 0 else 0.0,
             }
         )
-    z0_concat, z0_rf = _concat(out, "R1-B0", "TOPN_MV_GUARD_NO_NLP")
-    z0 = metrics(z0_concat, z0_rf)
+    z0_mean_cum = _mean_cum(out, "R1-B0", "TOPN_MV_GUARD_NO_NLP")
+    z0_mean_mdd = _mean_mdd(out, "R1-B0", "TOPN_MV_GUARD_NO_NLP")
     z0_row = {
         "config": "Z0 (=B0)",
-        "R": z0["cumulative_return"],
-        "mean_mdd": _mean_mdd(out, "R1-B0", "TOPN_MV_GUARD_NO_NLP"),
+        "mean_cumulative_return": z0_mean_cum,
+        "mean_mdd": z0_mean_mdd,
+        "R": z0_mean_cum / z0_mean_mdd if z0_mean_mdd > 0 else 0.0,
     }
     a_qualifiers = [
-        row for row in z_rows if row["R"] > R_THRESHOLD and row["mean_mdd"] <= MDD_THRESHOLD
+        row for row in z_rows if row["R"] > z0_row["R"] and row["mean_mdd"] <= MDD_THRESHOLD
     ]
     if a_qualifiers:
         best = max(a_qualifiers, key=lambda row: (row["R"], -row["mean_mdd"]))
         a_star = best["config"]
     else:
-        best = z0_row
         a_star = "Z0"
     a_run = "R1-B0" if a_star == "Z0" else f"R2-{a_star}"
-    a_concat, a_rf = _concat(out, a_run, "TOPN_MV_GUARD_NO_NLP")
-    a_metrics = metrics(a_concat, a_rf)
+    a_mean_cum = _mean_cum(out, a_run, "TOPN_MV_GUARD_NO_NLP")
+    a_mean_mdd = _mean_mdd(out, a_run, "TOPN_MV_GUARD_NO_NLP")
+    a_ratio = a_mean_cum / a_mean_mdd if a_mean_mdd > 0 else 0.0
 
     b_rows = []
     for config in ("B1", "B2", "B3", "B4", "B5", "B6"):
         run_id = f"R1-{config}"
-        concat, rf = _concat(out, run_id, "TOPN_MV_GUARD_NO_NLP")
-        item = metrics(concat, rf)
+        mean_cum = _mean_cum(out, run_id, "TOPN_MV_GUARD_NO_NLP")
+        mean_mdd = _mean_mdd(out, run_id, "TOPN_MV_GUARD_NO_NLP")
         b_rows.append(
             {
                 "config": config,
-                "R": item["cumulative_return"],
-                "mean_mdd": _mean_mdd(out, run_id, "TOPN_MV_GUARD_NO_NLP"),
+                "mean_cumulative_return": mean_cum,
+                "mean_mdd": mean_mdd,
+                "R": mean_cum / mean_mdd if mean_mdd > 0 else 0.0,
             }
         )
-    qualifiers = [
-        row
-        for row in b_rows
-        if row["R"] > a_metrics["cumulative_return"] and row["mean_mdd"] <= MDD_THRESHOLD
+    b_qualifiers = [
+        row for row in b_rows if row["R"] > a_ratio and row["mean_mdd"] <= MDD_THRESHOLD
     ]
-    if qualifiers:
-        best_b = max(qualifiers, key=lambda row: (row["R"], -row["mean_mdd"]))
+    if b_qualifiers:
+        best_b = max(b_qualifiers, key=lambda row: (row["R"], -row["mean_mdd"]))
         b_star = best_b["config"]
     else:
-        best_b = None
         b_star = a_star
     b_run = (
         "R1-B0"
         if b_star == "Z0"
         else (f"R2-{b_star}" if b_star.startswith("Z") else f"R1-{b_star}")
     )
-    b_concat, b_rf = _concat(out, b_run, "TOPN_MV_GUARD_NO_NLP")
-    b_metrics = metrics(b_concat, b_rf)
+    b_mean_cum = _mean_cum(out, b_run, "TOPN_MV_GUARD_NO_NLP")
+    b_mean_mdd = _mean_mdd(out, b_run, "TOPN_MV_GUARD_NO_NLP")
+    b_ratio = b_mean_cum / b_mean_mdd if b_mean_mdd > 0 else 0.0
     return {
         "stage_a": {
             "z0": z0_row,
             "rows": z_rows,
             "a_star": a_star,
-            "a_star_R": a_metrics["cumulative_return"],
-            "a_star_mean_mdd": _mean_mdd(out, a_run, "TOPN_MV_GUARD_NO_NLP"),
-            "qualifiers": [row["config"] for row in a_qualifiers] if a_qualifiers else [],
+            "a_star_R": a_ratio,
+            "a_star_mean_cumulative_return": a_mean_cum,
+            "a_star_mean_mdd": a_mean_mdd,
+            "threshold_ratio": z0_row["R"],
+            "qualifiers": [row["config"] for row in a_qualifiers],
         },
         "stage_b": {
             "rows": b_rows,
             "b_star": b_star,
-            "b_star_R": b_metrics["cumulative_return"],
-            "b_star_mean_mdd": _mean_mdd(out, b_run, "TOPN_MV_GUARD_NO_NLP"),
-            "qualifiers": [row["config"] for row in qualifiers] if qualifiers else [],
+            "b_star_R": b_ratio,
+            "b_star_mean_cumulative_return": b_mean_cum,
+            "b_star_mean_mdd": b_mean_mdd,
+            "qualifiers": [row["config"] for row in b_qualifiers],
         },
     }
 

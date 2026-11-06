@@ -555,7 +555,7 @@
    "last_return_session": "2024-11-21",
    "type": "acquisition_stock",
    "valuation_basis": "approximation_last_close",
-   "source": "https://www.sec.gov/Archives/edgar/data/101778/000010177823000003/0000101778-23-000003-index.htm",
+   "source": "https://www.sec.gov/Archives/edgar/data/101778/000110465924122113/0001104659-24-122113-index.htm",
    "note": "acquisition; consideration: stock; the consideration is not modelled"
   },
   {
@@ -675,7 +675,7 @@
    "last_return_session": "2025-08-27",
    "type": "acquisition_cash",
    "valuation_basis": "approximation_last_close",
-   "source": "https://www.sec.gov/Archives/edgar/data/1618921/000119312523001940/0001193125-23-001940-index.htm",
+   "source": "https://www.sec.gov/Archives/edgar/data/1618921/000119312525190603/0001193125-25-190603-index.htm",
    "note": "acquisition; consideration: cash; the consideration is not modelled"
   },
   {
@@ -745,7 +745,7 @@
    "last_return_session": "2025-12-10",
    "type": "acquisition_cash",
    "valuation_basis": "approximation_last_close",
-   "source": "https://www.sec.gov/Archives/edgar/data/55067/000119312523249062/0001193125-23-249062-index.htm",
+   "source": "https://www.sec.gov/Archives/edgar/data/55067/000119312525315130/0001193125-25-315130-index.htm",
    "note": "acquisition; consideration: cash; the consideration is not modelled"
   },
   {
@@ -965,7 +965,7 @@
    "last_return_session": "2026-10-05",
    "type": "acquisition_stock",
    "valuation_basis": "approximation_last_close",
-   "source": "https://www.sec.gov/Archives/edgar/data/1437107/000119312522103051/0001193125-22-103051-index.htm",
+   "source": "https://www.sec.gov/Archives/edgar/data/1437107/000119312526415055/0001193125-26-415055-index.htm",
    "note": "acquisition; consideration: stock; the consideration is not modelled"
   }
  ]

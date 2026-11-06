@@ -32,7 +32,7 @@ from phase1_stats import (
 OLD = Path("/workspaces/thesis/scratch/final/out/final_round/runs")
 R_THRESHOLD = 0.8446
 MDD_THRESHOLD = 0.0831
-EXIT_EPS = 1e-9
+EXIT_EPS = 1e-4
 SPY_FILE = Path("/workspaces/thesis/scratch/final/data/spy/spy_tr.json")
 FINAL = "R1-B5"
 B0 = "R1-B0"
@@ -150,6 +150,9 @@ def _exits_table(out: Path) -> list[dict[str, Any]]:
         payload = json.loads(path.read_text())
         for row in payload.get("exits", []):
             if float(row.get("residual_weight", 0.0)) <= EXIT_EPS:
+                continue
+            if float(row.get("weight_before", 0.0)) <= EXIT_EPS:
+                # A 3e-6 numerical crumb is not a held position (MKTX in the P2 runs).
                 continue
             records.append(
                 {
@@ -437,7 +440,9 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
                     _num(metrics_w["calmar"]),
                     _pct(metrics_w["cvar95"]),
                     _num(metrics_w["days_under_water"], 0),
-                    _num(item["per_window_cost"][window], 1),
+                    "in series"
+                    if name.startswith("BMK")
+                    else _num(item["per_window_cost"][window], 1),
                 ]
             )
         lines.append(f"### {window}\n")
@@ -574,6 +579,52 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
             ]
         )
     if c1_available:
+        spy_all_c1 = _spy_returns()
+        c1_extra: list[tuple[str, dict[str, float]]] = []
+        b0_c1_arm = load_run(out, "R8-B0-C1")
+        c1_extra.append(("C1 MARKOWITZ_BASE", arm_daily(b0_c1_arm, "MARKOWITZ_BASE")))
+        c1_extra.append(
+            (
+                "C1 SPY",
+                {
+                    day: spy_all_c1[day]
+                    for day in b0_c1_arm["daily"]["MARKOWITZ_BASE"]
+                    if day in spy_all_c1
+                },
+            )
+        )
+        c1_extra.append(
+            (
+                "C1 SP500_EW",
+                {day: float(v) for day, v in b0_c1_arm["benchmark"].items()},
+            )
+        )
+        if (out / "benchmarks.json").is_file():
+            bench_c1 = (
+                json.loads((out / "benchmarks.json").read_text()).get("C1", {}).get("series", {})
+            )
+            for benchmark in ("BMK_EXPO_GUARD", "BMK_EXPO_NOGUARD", "BMK_BETA", "BMK_VOL"):
+                if benchmark in bench_c1:
+                    c1_extra.append(
+                        (
+                            f"C1 {benchmark}",
+                            {day: float(v) for day, v in bench_c1[benchmark].items()},
+                        )
+                    )
+        for label, values in c1_extra:
+            item = metrics(values, b0_c1_arm["rf"])
+            c1_rows.append(
+                [
+                    label,
+                    _pct(item["cumulative_return"]),
+                    _pct(item["cagr"]),
+                    _num(item["sharpe"]),
+                    _num(item["max_drawdown"]),
+                    _num(item["calmar"]),
+                    _pct(item["cvar95"]),
+                    _num(item["days_under_water"], 0),
+                ]
+            )
         lines.append(
             _table(["series", "R", "CAGR", "Sharpe", "MDD", "Calmar", "CVaR95", "days UW"], c1_rows)
         )
@@ -608,13 +659,17 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
                 for w in WINDOWS
             ]
         )
-        stage_rows.append([config, _pct(cum), _num(mdd)])
-    lines.append(_table(["configuration", "mean R", "mean MDD"], stage_rows))
+        stage_rows.append([config, _pct(cum), _num(mdd), _num(cum / mdd if mdd else 0.0, 4)])
+    lines.append(
+        _table(
+            ["configuration", "mean cumulative return", "mean MDD", "R = mean return / mean MDD"],
+            stage_rows,
+        )
+    )
     if not (out / "selection_phase1.json").is_file():
         lines.append(
-            "\nStage A/B were not run to completion: the Z1-Z4 cells (Stage A) are part of R2, "
-            "which reached only V0-V5 and X1 before the plan's 8 h stop. The B0-B6 rows above "
-            "are the completed Stage B candidates.\n"
+            "\nStage A/B were not run to completion: the Z1-Z4 cells (Stage A) are part of R2. "
+            "The B0-B6 rows above are the completed Stage B candidates.\n"
         )
         selection_stage = None
     else:
@@ -623,12 +678,17 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         a = selection_stage["stage_a"]
         b = selection_stage["stage_b"]
         lines.append(
-            f"\n**Adoption rule outcome (numbers only).** Stage A: A* = **{a['a_star']}** "
-            f"(R {_pct(a['a_star_R'])}, mean MDD {_num(a['a_star_mean_mdd'])}; qualifiers "
-            f"{a['qualifiers'] or 'none'} against R > {R_THRESHOLD:.4f} and mean MDD <= "
-            f"{MDD_THRESHOLD:.4f}). Stage B: B* = **{b['b_star']}** (R {_pct(b['b_star_R'])}, "
-            f"mean MDD {_num(b['b_star_mean_mdd'])}; qualifiers {b['qualifiers'] or 'none'} "
-            "against R(A*)). No new selection is made from these numbers.\n"
+            f"\n**Adoption rule (numbers only).** The rule's R is the ratio **mean cumulative "
+            f"return / mean MDD** over the six windows. The corrected Y2 (Z0/B0) ratio is "
+            f"**{a['threshold_ratio']:.4f}** (the old-panel Y2 was 0.8446), so the corrected "
+            f"threshold replaces 0.8446. Stage A: A* = **{a['a_star']}** (ratio "
+            f"{a['a_star_R']:.4f}, mean return {_pct(a['a_star_mean_cumulative_return'])}, mean "
+            f"MDD {_num(a['a_star_mean_mdd'])}; qualifiers {a['qualifiers'] or 'none'} against "
+            f"ratio > {a['threshold_ratio']:.4f} and mean MDD <= {MDD_THRESHOLD:.4f}). Stage B: "
+            f"B* = **{b['b_star']}** (ratio {b['b_star_R']:.4f}, mean return "
+            f"{_pct(b['b_star_mean_cumulative_return'])}, mean MDD {_num(b['b_star_mean_mdd'])}; "
+            f"qualifiers {b['qualifiers'] or 'none'} against ratio(A*)). The outcome is unchanged: "
+            "A* = Z0 and B* = B5. No new selection is made from these numbers.\n"
         )
 
     # 7. CHAMPION
@@ -908,7 +968,8 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         for key, dsr in family["dsr"].items():
             rows.append(
                 [
-                    key,
+                    "FINAL (B5)",
+                    key.removeprefix("N"),
                     _num(dsr["sharpe_annual"], 3),
                     _num(dsr["skew"], 3),
                     _num(dsr["kurtosis"], 3),
@@ -916,7 +977,14 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
                     _num(dsr["dsr"], 3),
                 ]
             )
-        lines.append(_table(["DSR", "SR annual", "skew", "kurtosis", "SR0 daily", "DSR"], rows))
+        lines.append(
+            _table(["series", "N", "SR annual", "skew", "kurtosis", "SR0 daily", "DSR"], rows)
+        )
+        lines.append(
+            "The DSR is computed on **FINAL (B5)**'s daily excess returns; FINAL is also the "
+            "family's highest annual Sharpe (0.917), so the best-configuration row is the same "
+            "series."
+        )
         lines.append("")
         rows = []
         for key, emax in family["expected_max"].items():
@@ -951,6 +1019,14 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
     )
     lines.append("### 11.1 The classified event table\n")
     lines.append(
+        "The source of every acquisition is its completion 8-K (Item 2.01). Four rows whose "
+        "first source was an earlier 2023/2022 accession are now tied to the completion filing "
+        "of the event year: MRO (2024-11-22), WBA (2025-08-28), K (2025-12-11) and WBD "
+        "(2026-10-06). Check over all 96 rows: every EDGAR accession's year equals the stint "
+        "end's year (0 mismatches); the S&P DJI releases are dated within 40 days of the stint "
+        "end, so a December release for a January stint is a legitimate year boundary.\n"
+    )
+    lines.append(
         _table(
             ["ticker", "stint end", "type", "valuation basis", "source"],
             [
@@ -969,17 +1045,20 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
     exit_rows = _exits_table(out)
     lines.append("### 11.2 Every exit held, per arm and window\n")
     if exit_rows:
-        total_cost = sum(row["liquidation_cost_bps"] for row in exit_rows)
         tickers_held = sorted({row["ticker"] for row in exit_rows})
+        per_run: dict[str, float] = {}
+        for row in exit_rows:
+            per_run[row["run"]] = per_run.get(row["run"], 0.0) + row["liquidation_cost_bps"]
+        largest_run = max(per_run, key=per_run.get)
         lines.append(
             f"Distinct tickers held through an exit: **{', '.join(tickers_held)}**. "
-            f"Total liquidation cost over these records: **{total_cost:.2f} bps** "
-            f"(sum of the residual weights times 10 bp).\n"
+            f"The largest per-run exit cost is **{per_run[largest_run]:.2f} bps** in "
+            f"`{largest_run}`. A zero-weight position is not counted as held: MKTX's P2 rows "
+            "(3e-6 weight) are excluded; its C1 row (0.28%) is a real held position.\n"
         )
     lines.append(
-        f"This run family held an asset through **{len(exit_rows)}** exit arms/windows. The "
-        "residual is the drifted weight on the recognition session; the exit's cost is 10 bp "
-        "times it.\n"
+        f"The table lists **{len(exit_rows)}** held-exit records. The residual is the drifted "
+        "weight on the recognition session; the exit's cost is 10 bp times it.\n"
     )
     if exit_rows:
         lines.append(
@@ -1109,6 +1188,13 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         rows.append([label, *cells, stationary10, stationary21])
     lines.append(
         _table(["comparison", "b5", "b10", "b21", "b42", "stationary 10", "stationary 21"], rows)
+    )
+    lines.append(
+        "\nEach p is a **two-sided paired bootstrap** of H0: dMDD = 0 against H1: dMDD != 0, "
+        "where dMDD = MDD(first) - MDD(second) on the same sessions. The p is the fraction of "
+        "resamples with |dMDD*| >= |observed| (plus one). A small p says the observed "
+        "difference is unlikely under no difference; the direction is the sign in the "
+        "comparison label, not the p."
     )
     if (out / "benchmarks.json").is_file() and (out / "runs" / "R8-FINAL-C1.json").is_file():
         bench = json.loads((out / "benchmarks.json").read_text())["C1"]["series"]
