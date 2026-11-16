@@ -16,7 +16,7 @@ from sec_xcheck import stored_measures as sm
 from sec_xcheck.common import SecClient
 from sec_xcheck_support import metric, rec
 
-from cycle.scores.normalize import _winsorize
+from cycle.scores.normalize import winsorize
 
 G = "us-gaap_"
 
@@ -77,8 +77,10 @@ def test_a_missing_revenue_hard_vetoes_through_data_quality() -> None:
     assert "DQ_REVENUE_POS" in hits[0][3]["gates"]
 
 
-def test_negative_equity_quarantines_the_ratios_so_the_leverage_rules_never_see_them() -> None:
-    """D-04: the negative-equity branch of LEVERAGE_EXTREME reads a debt/equity that the gate has already nulled."""
+def test_negative_equity_is_vetoed_through_the_gate_record_not_the_nulled_ratio() -> None:
+    """D-04 (T-071 part 2a): the gate nulls D/E, so LEVERAGE_EXTREME keys on the equity sign from the
+    DQ_NEG_EQUITY record and reads TTM EBITDA/net debt from it. This rec is distressed on both the
+    net-debt/EBITDA and the coverage condition."""
     r = rec(
         cik="9",
         items={"equity": -10.0},
@@ -97,7 +99,9 @@ def test_negative_equity_quarantines_the_ratios_so_the_leverage_rules_never_see_
     )
     out = cm.replay_cycle({"9": r}, "2026-09-22")
     assert out["negative_equity"] == {"9"}
-    assert not [h for h in out["hits"] if h[1] == "LEVERAGE_EXTREME"]
+    hits = [h for h in out["hits"] if h[1] == "LEVERAGE_EXTREME"]
+    assert len(hits) == 1 and hits[0][2] == "HARD"
+    assert hits[0][3]["failed"] == ["net_debt_to_ebitda", "interest_coverage"]
 
 
 def test_distress_conditions_use_the_gates_formulas_and_drop_without_condition_2() -> None:
@@ -192,18 +196,16 @@ def test_con08_reads_total_equals_continuing_when_no_discontinued_line_is_filed(
     assert em.identity_result({ocf: 500e6, cont: 400e6}, "CON-08") == "block"
 
 
-def test_winsorizing_at_two_percent_and_a_half_percent_trim_one_value_per_tail_below_100_assets() -> (
-    None
-):
-    """N17: ``k = max(1, int(n x frac))`` is 1 for both fractions at n = 20 (5% per tail), so they are identical there."""
-    twenty = [float(i) for i in range(20)] + [1000.0]
-    assert _winsorize(twenty, 0.02) == _winsorize(twenty, 0.005)
-    assert em.winsor_effect(twenty) == (0, 0.0)
-    assert (
-        sorted(set(_winsorize(twenty, 0.02)))[-1] == 19.0
-    )  # one value per tail, whatever the fraction
+def test_dq02_winsorizes_half_a_percent_per_tail_and_nothing_below_200_assets() -> None:
+    """DQ-02 (T-071 part 2b, D3): ``floor(0.005 x n)`` values per tail, and **nothing** when
+    ``n < 200`` -- the count is a floor, never ``max(1, ...)`` (a 21-name cohort has no 0.5% tail)."""
+    small = [float(i) for i in range(20)] + [1000.0]  # n = 21 < 200: returned untouched
+    assert winsorize(small, 0.02) == small
+    assert winsorize(small, 0.005) == small
+    assert em.winsor_effect(small) == (0, 0.0)
     large = [float(i) for i in range(1000)]
-    assert _winsorize(large, 0.02) != _winsorize(large, 0.005)  # 20 values per tail against 5
+    assert winsorize(large, 0.02) != winsorize(large, 0.005)  # 20 values per tail against 5
+    assert sorted(set(winsorize(large, 0.005)))[-1] == 994.0  # the top 5 trimmed to the 6th largest
 
 
 # -- market cap ----------------------------------------------------------------------------------------

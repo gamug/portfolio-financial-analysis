@@ -10,7 +10,7 @@ a positive trailing year).
 
 from __future__ import annotations
 
-from fundamental_agent.metrics.base import MetricResult, present, safe_div
+from fundamental_agent.metrics.base import MetricResult, flag_inputs, present, safe_div
 from fundamental_agent.statements import Statements
 
 GROUP = "cashflow"
@@ -28,7 +28,9 @@ def _free_cash_flow(ocf: float | None, capex: float | None) -> tuple[float | Non
         return None, None
     if capex is None:
         return ocf, None
-    return ocf, ocf - abs(capex)
+    # capex is a payment, in the sign it was filed (positive, ID-11/ID-12): a negative one is a
+    # wrong sign the resolver has already rejected (ID-13), never repaired here with abs()
+    return ocf, ocf - capex
 
 
 def compute(
@@ -44,7 +46,8 @@ def compute(
     revenue = stmts.get("revenue", period_key)
     net_income = stmts.get("net_income", period_key)
     ocf, fcf = free_cash_flow(stmts, period_key)
-    capex = stmts.get("capital_expenditure", period_key)
+    capex_resolution = stmts.resolve("capital_expenditure", period_key)
+    capex = capex_resolution.value
 
     # The raw single-period figures are the audit trail, and what a later filing's own TTM reads
     # back as one of its trailing quarters (`db._recorded_flow`) -- never replaced by TTM values.
@@ -55,6 +58,7 @@ def compute(
         free_cash_flow=fcf,
         capital_expenditure=capex,
     )
+    inputs.update(flag_inputs("capital_expenditure", capex_resolution.flags))
     if ttm is not None:
         revenue, net_income = ttm.get("revenue"), ttm.get("net_income")
         ocf, capex = ttm.get("operating_cash_flow"), ttm.get("capital_expenditure")
@@ -68,13 +72,24 @@ def compute(
                 capital_expenditure_ttm=capex,
             )
         )
+    # MET-09 / N9 (D5): free-cash-flow conversion over a non-positive net income inverts the
+    # ordering. Net income = 0 -> not defined (empty, no flag); net income < 0 -> empty, flagged
+    # denominator_negative. A negative *numerator* (FCF) over a positive net income is a valid
+    # negative value.
+    fcf_conversion = None
+    if fcf is not None and net_income is not None:
+        if net_income < 0.0:
+            inputs["flag_free_cash_flow_conversion_denominator_negative"] = 1.0
+        elif net_income > 0.0:
+            fcf_conversion = fcf / net_income
+
     return [
         MetricResult("operating_cash_flow_margin", safe_div(ocf, revenue), "ratio", inputs),
         MetricResult("free_cash_flow_margin", safe_div(fcf, revenue), "ratio", inputs),
-        MetricResult("free_cash_flow_conversion", safe_div(fcf, net_income), "x", inputs),
+        MetricResult("free_cash_flow_conversion", fcf_conversion, "x", inputs),
         MetricResult(
             "capex_intensity",
-            safe_div(abs(capex) if capex is not None else None, revenue),
+            safe_div(capex, revenue),
             "ratio",
             inputs,
         ),

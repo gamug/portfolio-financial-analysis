@@ -10,8 +10,11 @@ from pathlib import Path
 from kg_schema.cli import add_coverage_parser, coverage_from_args, run_migrate
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
+from pricing_agent import tiingo
 from pricing_agent.config import Settings
+from pricing_agent.pending import pending_line
 from pricing_agent.pipeline import DEFAULT_START_DATE, RunParams, run
+from pricing_agent.tiingo import DEFAULT_DATA_FILE, DEFAULT_MANIFEST_FILE, DEFAULT_TIINGO_DIR
 
 _ALLOW_DIRTY_HELP = (
     "override the clean-tree guard (T-114) and write this run's code_version even "
@@ -74,10 +77,42 @@ def build_parser() -> argparse.ArgumentParser:
         "genuine one-day move of that size, which the guard cannot tell from a mis-adjusted split",
     )
 
+    pending_cmd = sub.add_parser(
+        "pending",
+        help="read-only: does a member lack the last session's data? One line (T-017)",
+    )
+    pending_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    pending_cmd.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
+    add_analysis_date_argument(pending_cmd)
+
     migrate_cmd = sub.add_parser(
         "migrate", help="apply pending shared-schema migrations (advances schema_version)"
     )
     migrate_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
+
+    import_cmd = sub.add_parser(
+        "import-tiingo",
+        help="load the private Tiingo leaver-price file into price_daily/corporate_action "
+        "(T-153 part 3d; refuses a file inside a git work tree or with a wrong sha256)",
+    )
+    import_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    import_cmd.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
+    import_cmd.add_argument(
+        "--file",
+        default=str(DEFAULT_TIINGO_DIR / DEFAULT_DATA_FILE),
+        help=f"the private data file (default {DEFAULT_TIINGO_DIR / DEFAULT_DATA_FILE})",
+    )
+    import_cmd.add_argument(
+        "--manifest",
+        default=None,
+        help="the fetch manifest (default: beside --file, named leaver_prices.manifest.json)",
+    )
+    import_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="run every check and report the plan; write nothing and no run row",
+    )
+    add_analysis_date_argument(import_cmd)
 
     add_coverage_parser(sub)
     return parser
@@ -96,9 +131,43 @@ def _settings_from_args(args: argparse.Namespace) -> Settings:
         updates["db_path"] = Path(args.db)
     if args.universe_db:
         updates["universe_db_path"] = Path(args.universe_db)
-    if args.allow_dirty:
+    if getattr(args, "allow_dirty", False):
         updates["allow_dirty"] = True
     return settings.model_copy(update=updates) if updates else settings
+
+
+def _run_import(args: argparse.Namespace) -> int:
+    """``import-tiingo``: counts, dates and hashes on one line (never a value)."""
+    data_file = Path(args.file)
+    manifest = Path(args.manifest) if args.manifest else data_file.with_name(DEFAULT_MANIFEST_FILE)
+    settings = _settings_from_args(args)
+    analysis_date = resolve_analysis_date(args.analysis_date)
+    try:
+        report = tiingo.import_tiingo(
+            settings,
+            data_file=data_file,
+            manifest_path=manifest,
+            analysis_date=analysis_date,
+            dry_run=args.dry_run,
+        )
+    except tiingo.TiingoImportError as exc:
+        print(f"import-tiingo refused: {exc}")
+        return 1
+    verb = "would import" if args.dry_run else "imported"
+    print(
+        f"import-tiingo {verb} {report.lines_imported}/{report.lines} lines of "
+        f"{report.first_date}..{report.last_date}: {report.price_rows} price rows, "
+        f"{report.dividend_rows} dividends, {report.split_rows} splits "
+        f"(sha256 {report.file_sha256[:12]}...)"
+    )
+    if report.gateway_only:
+        named = ", ".join(
+            f"{line.ticker} ({line.stored_rows} stored)" for line in report.gateway_only
+        )
+        print(f"import-tiingo gateway-only {len(report.gateway_only)}: {named}")
+    else:
+        print("import-tiingo gateway-only 0 lines")
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -108,6 +177,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_migrate(args.db)
     if args.command == "coverage":
         return coverage_from_args(args)
+    if args.command == "pending":
+        print(pending_line(_settings_from_args(args), resolve_analysis_date(args.analysis_date)))
+        return 0
+    if args.command == "import-tiingo":
+        return _run_import(args)
     if args.observations and not args.store_daily:
         parser.error(
             "--observations needs --store-daily: price_observation rows are per-day "

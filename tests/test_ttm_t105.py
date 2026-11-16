@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from conftest import filed_after
 from portfolio_common.db import Database
 
 from fundamental_agent import db, quality
-from fundamental_agent.agents import _flag_annualization
+from fundamental_agent.agents import FilingContext, _flag_annualization
 from fundamental_agent.db import FilingKey, FilingMeta, YTDPair
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.metrics.leverage import compute as leverage_compute
@@ -22,7 +23,8 @@ from fundamental_agent.metrics.roic import compute as roic_compute
 from fundamental_agent.metrics.valuation import compute as valuation_compute
 from fundamental_agent.pipeline import _targets, _YearTask, _ytd_columns
 from fundamental_agent.pricing import ClosePrice
-from fundamental_agent.statements import Statements
+from fundamental_agent.statements import CoverShares, Statements
+from kg_schema.market_cap import MarketCap
 
 
 def _asset(conn: Database) -> int:
@@ -181,6 +183,8 @@ def _quarter() -> Statements:
             "label": concept,
             "abstract": False,
             "dimension": False,
+            # a payment is displayed negative with preferred_sign -1 (ID-12): filed it is positive
+            "preferred_sign": -1.0 if value < 0 and concept.startswith("us-gaap_Payments") else 1.0,
             key: value,
         }
 
@@ -191,36 +195,33 @@ def _quarter() -> Statements:
         row("us-gaap_OperatingIncomeLoss", 900.0, "income_statement"),
         row("us-gaap_DepreciationDepletionAndAmortization", 100.0),
         row("us-gaap_InterestExpense", 40.0, "income_statement"),
+        row("us-gaap_IncomeTaxExpenseBenefit", 200.0, "income_statement"),
+        row(
+            "us-gaap_IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+            1_000.0,
+            "income_statement",
+        ),
     ]
+
+    def balance_row(concept: str, label: str, current: float, prior: float) -> dict[str, Any]:
+        # T-151 part 2: MET-01/MET-02 divide by the prior fiscal year end, which a 10-Q's own
+        # balance sheet carries as its comparative column (2024-12-31).
+        return {
+            "concept": concept,
+            "label": label,
+            "abstract": False,
+            "dimension": False,
+            "2025-06-30": current,
+            "2024-12-31": prior,
+        }
+
     balance = [
-        {
-            "concept": "us-gaap_CommonStockSharesOutstanding",
-            "label": "shares",
-            "abstract": False,
-            "dimension": False,
-            "2025-06-30": 100.0,
-        },
-        {
-            "concept": "us-gaap_LongTermDebt",
-            "label": "debt",
-            "abstract": False,
-            "dimension": False,
-            "2025-06-30": 10_000.0,
-        },
-        {
-            "concept": "us-gaap_CashAndCashEquivalentsAtCarryingValue",
-            "label": "cash",
-            "abstract": False,
-            "dimension": False,
-            "2025-06-30": 2_000.0,
-        },
-        {
-            "concept": "us-gaap_StockholdersEquity",
-            "label": "equity",
-            "abstract": False,
-            "dimension": False,
-            "2025-06-30": 20_000.0,
-        },
+        # a complete balance sheet (ID-02b: a partial debt map is accepted only on one)
+        balance_row("us-gaap_Assets", "assets", 50_000.0, 50_000.0),
+        balance_row("us-gaap_CommonStockSharesOutstanding", "shares", 100.0, 100.0),
+        balance_row("us-gaap_LongTermDebt", "debt", 10_000.0, 10_000.0),
+        balance_row("us-gaap_CashAndCashEquivalentsAtCarryingValue", "cash", 2_000.0, 2_000.0),
+        balance_row("us-gaap_StockholdersEquity", "equity", 20_000.0, 20_000.0),
     ]
     payload: dict[str, list[Any]] = {
         "income_statement": [],
@@ -229,12 +230,14 @@ def _quarter() -> Statements:
     }
     for statement, r in rows:
         payload[statement].append(r)
-    return Statements.from_payload(payload)
+    stmts = Statements.from_payload(payload)
+    stmts.cover_shares = [CoverShares(100.0, "2025-06-30")]
+    return stmts
 
 
 TTM = {
     "operating_cash_flow": 4_100.0,
-    "capital_expenditure": -800.0,
+    "capital_expenditure": 800.0,
     "stock_based_compensation": 190.0,
     "operating_income": 3_500.0,
     "depreciation_amortization": 400.0,
@@ -242,6 +245,19 @@ TTM = {
 }
 KEY = "2025-06-30 (Q2)"
 PRICE = ClosePrice(date="2025-06-30", close=400.0)  # market cap 40,000
+MC = MarketCap(
+    asset_id=1,
+    value=40_000.0,
+    shares=100.0,
+    share_count=100.0,
+    share_as_of="2025-06-30",
+    share_age_days=0,
+    filing_id=1,
+    close=400.0,
+    close_date="2025-06-30",
+    n_classes=0,
+    split_factor=1.0,
+)
 
 
 def _by_name(results: list[MetricResult]) -> dict[str, MetricResult]:
@@ -249,20 +265,20 @@ def _by_name(results: list[MetricResult]) -> dict[str, MetricResult]:
 
 
 def test_fcf_yields_divide_a_year_of_cash_flow_by_the_price() -> None:
-    out = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, TTM))
+    out = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, TTM, market_cap=MC))
     assert out["free_cash_flow_yield"].value == pytest.approx((4_100 - 800) / 40_000)
     assert out["sbc_adjusted_fcf_yield"].value == pytest.approx((4_100 - 800 - 190) / 40_000)
     inputs = out["free_cash_flow_yield"].inputs
-    assert inputs["free_cash_flow_to_equity"] == 800.0  # the raw quarter stays on record
-    assert inputs["free_cash_flow_to_equity_ttm"] == 3_300.0
+    assert inputs["free_cash_flow"] == 800.0  # the raw quarter stays on record
+    assert inputs["free_cash_flow_ttm"] == 3_300.0
     # without TTM (a 10-K) the filing's own period is the year
-    tenk = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, None))
+    tenk = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, None, market_cap=MC))
     assert tenk["free_cash_flow_yield"].value == pytest.approx(800 / 40_000)
 
 
 def test_a_ttm_yield_never_mixes_in_a_raw_quarter() -> None:
     partial = {k: v for k, v in TTM.items() if k != "capital_expenditure"}
-    out = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, partial))
+    out = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, partial, market_cap=MC))
     assert out["free_cash_flow_yield"].value is None
 
 
@@ -275,13 +291,15 @@ def test_net_debt_to_ebitda_uses_a_year_of_ebitda() -> None:
 
 
 def test_roic_uses_a_year_of_nopat_and_nopat_stays_the_quarter() -> None:
+    """NOPAT's tax is MET-03's 21% (not the filing's own rate, D3); the denominator is the invested
+    capital at the prior fiscal year end (MET-02), which the 10-Q's comparative column carries."""
     out = _by_name(roic_compute(_quarter(), KEY, None, TTM))
-    rate = out["effective_tax_rate"].value
-    assert rate is not None
+    # the filing's own rate is reported: income tax 200 / pre-tax 1,000
+    assert out["effective_tax_rate"].value == pytest.approx(0.20)
     assert out["return_on_invested_capital"].value == pytest.approx(
-        3_500 * (1 - rate) / (10_000 + 20_000 - 2_000)
+        3_500 * (1 - 0.21) / (10_000 + 20_000 - 2_000)
     )
-    assert out["nopat"].value == pytest.approx(900 * (1 - rate))
+    assert out["nopat"].value == pytest.approx(900 * (1 - 0.21))
 
 
 def test_each_group_is_stamped_with_how_it_was_annualized() -> None:
@@ -301,6 +319,19 @@ def test_each_group_is_stamped_with_how_it_was_annualized() -> None:
 
 
 # -- review follow-ups: provenance, version pinning, the cross-check ---------------------------
+
+
+def test_a_crude_added_item_does_not_taint_the_group_stamp_f2() -> None:
+    """F2: the profitability stamp is the earnings-yield gate (MET-05), which reads ``net_income``.
+    A crude operating-income TTM must not stamp the group ``annualized_x4``; it carries its own
+    ``flag_operating_income_annualized_x4`` instead."""
+    prof = MetricResult("return_on_assets", 1.0, "ratio", {})
+    flows = {
+        "net_income": TTMFlow(1.0, "ytd"),
+        "operating_income": TTMFlow(1.0, "x4"),
+    }
+    _flag_annualization([("profitability", prof)], flows)
+    assert prof.inputs == {"annualized_ttm": 1.0, "flag_operating_income_annualized_x4": 1.0}
 
 
 def test_valuation_is_flagged_crude_when_sbc_or_interest_was_times_four() -> None:
@@ -406,6 +437,80 @@ def test_the_identity_is_kept_and_a_gap_to_four_quarters_goes_to_review(
     assert (evidence["identity"], evidence["four_quarters"]) == (identity, quarters)
 
 
+def _pending_filing(conn: Database) -> int:
+    return db.upsert_filing(
+        conn,
+        FilingKey(1, "10-Q", 2025, "2025Q3"),
+        FilingMeta(filing_date=filed_after("2025-09-30"), period_end="2025-09-30"),
+    )
+
+
+def test_the_cross_check_level_is_dq01_with_n_terms_7(memory_db: Database) -> None:
+    """T-150 (F1): a 1% net-income gap passed T-105's 1% relative rule but is material under DQ-01
+    (> 0.5% of the base). One SOFT row, never a quarantine; ``n_terms`` is the fixed 7."""
+    _asset(memory_db)
+    fid = _pending_filing(memory_db)
+    flows = {"net_income": TTMFlow(1_000.0, "ytd", alt=1_010.0)}
+    assert (
+        quality.record_ttm_crosscheck(
+            memory_db, fid, 1, flows, engine_version=db.METRICS_ENGINE_VERSION
+        )
+        == 1
+    )
+    row = memory_db.execute(
+        "SELECT metric_group, metric_name, severity, quarantined, evidence_json "
+        "FROM data_quality_issue"
+    ).fetchone()
+    evidence = json.loads(row["evidence_json"])
+    assert evidence["level"] == "block"  # 10 > max(0.5 x 1 x 7, 0.5% x 1000) = 5
+    assert evidence["n_terms"] == 7 and evidence["rounding"] == 3.5
+    assert (row["metric_group"], row["metric_name"], row["severity"], row["quarantined"]) == (
+        "ttm",
+        "net_income",
+        "SOFT",
+        0,
+    )
+
+
+def test_a_cash_flow_ttm_gap_without_a_base_is_a_warn(memory_db: Database) -> None:
+    """A cash-flow item has no TTM change in cash to use as base, so a not-pass is a WARN."""
+    _asset(memory_db)
+    fid = _pending_filing(memory_db)
+    flows = {"operating_cash_flow": TTMFlow(1_000.0, "ytd", alt=1_100.0)}
+    quality.record_ttm_crosscheck(
+        memory_db, fid, 1, flows, engine_version=db.METRICS_ENGINE_VERSION
+    )
+    evidence = json.loads(
+        memory_db.execute("SELECT evidence_json FROM data_quality_issue").fetchone()[0]
+    )
+    assert evidence["level"] == "warn" and evidence["base_missing"] is True
+
+
+def test_a_ttm_block_writes_only_the_ttm_row_and_quarantines_nothing(
+    memory_db: Database,
+) -> None:
+    """F1: the cross-check compares across filings, so a material gap is a review row, never a
+    quarantine -- even when the filing stored a metric that reads the flow."""
+    _asset(memory_db)
+    fid = _pending_filing(memory_db)
+    db.record_metrics(
+        memory_db,
+        fid,
+        [("profitability", MetricResult("return_on_assets", 0.05, "ratio", {}))],
+    )
+    flows = {"net_income": TTMFlow(1_000.0, "ytd", alt=1_020.0)}
+    quality.record_ttm_crosscheck(
+        memory_db, fid, 1, flows, engine_version=db.METRICS_ENGINE_VERSION
+    )
+    rows = {
+        (r["metric_group"], r["metric_name"], r["quarantined"])
+        for r in memory_db.execute(
+            "SELECT metric_group, metric_name, quarantined FROM data_quality_issue"
+        )
+    }
+    assert rows == {("ttm", "net_income", 0)}
+
+
 def test_no_review_when_the_two_agree_or_only_one_exists(memory_db: Database) -> None:
     _asset(memory_db)
     flows = {
@@ -419,3 +524,50 @@ def test_no_review_when_the_two_agree_or_only_one_exists(memory_db: Database) ->
         )
         == 0
     )
+
+
+def test_prior_10k_refused_da_attaches_flag_to_ttm_flow(memory_db: Database) -> None:
+    """G2: when prior 10-K refused D&A (depreciation_only_not_da), ttm_detail sets flag on TTMFlow."""
+    _asset(memory_db)
+    _record(
+        memory_db,
+        "10-K",
+        "FY2024",
+        "2024-12-31",
+        "leverage",
+        "net_debt_to_ebitda",
+        {"flag_depreciation_amortization_depreciation_only_not_da": 1.0},
+    )
+    flows = db.ttm_detail(
+        memory_db,
+        1,
+        period_end="2025-09-30",
+        current={},
+        ytd={"depreciation_amortization": YTDPair(300.0, 400.0, "2024-09-30")},
+    )
+    assert "depreciation_amortization" in flows
+    assert flows["depreciation_amortization"].flags == ("depreciation_only_not_da",)
+
+
+def test_filing_context_ttm_excludes_refused_flows() -> None:
+    """FilingContext.ttm excludes flows whose method is 'refused', so a refused term is never read as 0.0."""
+    stmts = MagicMock()
+    ctx = FilingContext(
+        ticker="TEST",
+        company_name="Test Co",
+        form="10-Q",
+        fiscal_period="Q2",
+        stmts=stmts,
+        period_key="2025-06-30_Q2",
+        prior_key=None,
+        ttm_flows={
+            "revenue": TTMFlow(1_000.0, "ytd"),
+            "depreciation_amortization": TTMFlow(0.0, "refused"),
+            "operating_cash_flow": TTMFlow(200.0, "x4"),
+        },
+    )
+    assert "revenue" in ctx.ttm
+    assert ctx.ttm["revenue"] == 1_000.0
+    assert "operating_cash_flow" in ctx.ttm
+    assert ctx.ttm["operating_cash_flow"] == 200.0
+    assert "depreciation_amortization" not in ctx.ttm

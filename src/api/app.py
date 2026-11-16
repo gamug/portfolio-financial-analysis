@@ -7,14 +7,26 @@ pass an explicit ``settings`` in tests. Serve with
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
 from api import __version__
 from api.config import ApiSettings
+from api.orchestrator import shutdown_active_run
 from api.routers import ALL as ROUTERS
 
 API_PREFIX = "/api/v1"
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Shutdown hook (T-015): a graceful stop kills the active run's child and records the run
+    ``failed`` before the process exits, rather than orphaning the child with the row ``running``."""
+    yield
+    shutdown_active_run()
 
 
 def create_app(settings: ApiSettings | None = None) -> FastAPI:
@@ -22,8 +34,12 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
     app = FastAPI(
         title=settings.title,
         version=__version__,
-        summary="Read-only HTTP surface over the v_* read-contract views and universe.db.",
+        summary=(
+            "Read-only data surface over the v_* read-contract views and universe.db, "
+            "plus the run endpoints that sequence the agent CLIs (T-011)."
+        ),
         root_path=settings.root_path,
+        lifespan=_lifespan,
     )
     app.state.settings = settings
 

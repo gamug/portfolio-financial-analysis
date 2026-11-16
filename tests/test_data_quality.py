@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import seed_value_inputs
 from portfolio_common.db import Database
 
 import kg_schema
@@ -149,58 +150,40 @@ def test_mcap_scale_needs_positive_total_assets(assets: float | None) -> None:
     assert evaluate(_fm(market_capitalization=1e9, total_assets=assets)) == []
 
 
-@pytest.mark.parametrize(
-    ("ndte", "cov", "severity"),
-    [
-        (5.01, 8.0, "HARD"),
-        (2.0, 1.49, "HARD"),
-        (5.0, 1.5, "SOFT"),  # both limits are strict
-        (None, None, "SOFT"),
-    ],
-)
-def test_negative_equity_quarantines_de_and_roe_hard_only_when_distressed(
-    ndte: float | None, cov: float | None, severity: str
-) -> None:
-    issues = evaluate(_fm(equity=-10.0, net_debt_to_ebitda=ndte, interest_coverage=cov))
-    assert _rules(issues) == {("DQ_NEG_EQUITY", severity, True)}
-    assert {i.metric for i in issues} == {DTE, ROE}
+def test_negative_equity_is_a_soft_record_that_quarantines_de_only() -> None:
+    """D-04 (T-071 part 2a): book equity <= 0 is a *record*, never a veto. The gate is always SOFT
+    and quarantines D/E only; ROE keeps its own APP-07 test on the prior-year equity it divides by
+    (MET-02). The distress screen that used to live here moved to cycle's LEVERAGE_EXTREME (D2)."""
+    issues = evaluate(_fm(equity=-10.0))
+    assert _rules(issues) == {("DQ_NEG_EQUITY", "SOFT", True)}
+    assert {i.metric for i in issues} == {DTE}
+    assert issues[0].evidence == {
+        "equity": -10.0,
+        "net_debt_to_ebitda": 2.0,
+        "interest_coverage": 8.0,
+        "ebitda": 20.0,
+        "net_debt": 80.0,
+    }
 
 
-def test_negative_ebitda_with_positive_net_debt_is_hard_despite_a_negative_ratio() -> None:
-    """T-116 (PR #95 review): net_debt_to_ebitda = net_debt / ebitda goes *negative* when
-    EBITDA itself is negative -- the most distressed profile, not a healthy one (real data:
-    WAT 10-Q 2026-04-04, EBITDA -$11M, net debt $4.4B, ratio -399). Reconstructed straight from
-    the stored inputs, not trusted from the ratio's sign alone."""
+def test_the_negative_equity_record_keeps_the_credit_inputs_for_the_cycle_rule() -> None:
+    """The D2 rule reads equity, TTM EBITDA and net debt from this evidence rather than
+    reconstructing them from the ratio's sign -- a negative-EBITDA filing records them as stored
+    (T-116, PR #95 review: net_debt_to_ebitda goes *negative* when EBITDA itself is negative)."""
     issues = evaluate(
         _fm(
             equity=-10.0,
             net_debt_to_ebitda=-399.0,
-            interest_coverage=None,
             operating_income=-11.0,
             depreciation_amortization=0.0,
             total_debt=4400.0,
             cash=0.0,
         )
     )
-    assert _rules(issues) == {("DQ_NEG_EQUITY", "HARD", True)}
-
-
-def test_negative_ebitda_with_net_cash_stays_undistressed_by_that_signal_alone() -> None:
-    """The same negative ratio, but for the opposite, healthy reason (net cash exceeds debt,
-    HUM 10-Q 2023-03-31 shape): ebitda <= 0 alone, with no positive net debt, is not itself
-    HARD -- distinguished by reconstructing net debt too, not just EBITDA's sign."""
-    issues = evaluate(
-        _fm(
-            equity=-10.0,
-            net_debt_to_ebitda=-1.1,
-            interest_coverage=8.0,
-            operating_income=-2.0,
-            depreciation_amortization=0.0,
-            total_debt=10.0,
-            cash=50.0,
-        )
-    )
     assert _rules(issues) == {("DQ_NEG_EQUITY", "SOFT", True)}
+    ev = issues[0].evidence
+    assert ev["ebitda"] == -11.0 and ev["net_debt"] == 4400.0
+    assert ev["net_debt_to_ebitda"] == -399.0
 
 
 def test_zero_equity_is_negative_equity_and_positive_or_missing_is_not() -> None:
@@ -333,8 +316,7 @@ def test_the_table_checks_severity_and_the_view_names_the_filing(memory_db: Data
         "ORDER BY metric_name"
     ).fetchall()
     assert [tuple(r) for r in rows] == [
-        ("AAA", "10-K", "FY2025", "debt_to_equity", "HARD"),
-        ("AAA", "10-K", "FY2025", "return_on_equity", "HARD"),
+        ("AAA", "10-K", "FY2025", "debt_to_equity", "SOFT"),
     ]
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
@@ -459,36 +441,54 @@ def _valorization(conn: Database, asset_id: int, cycle_date: str) -> dict[str, A
     return dict(json.loads(row["inputs_json"]))
 
 
-def test_negative_equity_quarantine_keeps_leverage_the_worst_and_does_not_veto(
+def test_negative_equity_quarantine_drops_book_to_market_and_the_gate_does_not_veto(
     cycle_seed: Database,
 ) -> None:
-    """A SOFT DQ_NEG_EQUITY on AAA (the seed's lowest D/E): D/E and ROE read as NULL, the
-    leverage factor still ranks AAA worst (C2), and nothing vetoes it."""
+    """D-04 (T-071 part 2a) with VALORIZATION v2 (part 2b): a SOFT DQ_NEG_EQUITY on AAA quarantines
+    D/E, which is book-to-market's carrier, so B/M drops (status ``quarantined``) while the other
+    three measures stay -- and the gate raises no DATA_QUALITY veto. The hand-written record carries
+    no credit inputs, so LEVERAGE_EXTREME routes the name to SOFT review (T-116) -- never a HARD
+    veto."""
     conn = cycle_seed
+    seed_value_inputs(conn, "2026-06-30")
     run_selection(_cycle_settings(), "2026-06-29", conn=conn)
-    before = _valorization(conn, 1, "2026-06-29")["quality"]
+    before = _valorization(conn, 1, "2026-06-29")["measures"]
+    assert before["book_to_market"]["status"] == "present"
     fid = int(conn.execute("SELECT id FROM sec_filings WHERE asset_id = 1").fetchone()[0])
     _issue(conn, fid, DTE, "DQ_NEG_EQUITY", "SOFT")
     _issue(conn, fid, ROE, "DQ_NEG_EQUITY", "SOFT")
 
     run_selection(_cycle_settings(), "2026-06-30", conn=conn)
-    after = _valorization(conn, 1, "2026-06-30")["quality"]
-    assert after < before
-    rules = {r[0] for r in conn.execute("SELECT rule_id FROM veto WHERE asset_id = 1")}
-    assert "DATA_QUALITY" not in rules and "LEVERAGE_EXTREME" not in rules
+    after = _valorization(conn, 1, "2026-06-30")["measures"]
+    assert after["book_to_market"]["status"] == "quarantined"
+    assert after["book_to_market"]["value"] is None
+    assert after["earnings_yield"]["status"] == "present"
+    assert after["ebitda_to_ev"]["status"] == "present"
+    rules = {
+        (r[0], r[1]) for r in conn.execute("SELECT rule_id, severity FROM veto WHERE asset_id = 1")
+    }
+    assert "DATA_QUALITY" not in {rule for rule, _sev in rules}
+    assert ("LEVERAGE_EXTREME", "HARD") not in rules
 
 
-def test_a_quarantined_metric_drops_out_of_the_score(cycle_seed: Database) -> None:
-    """AAA's value factor rests on its FCF yield alone in the seed; quarantined, it is gone."""
+def test_a_quarantined_metric_drops_the_measure_that_reads_it(cycle_seed: Database) -> None:
+    """D2's gate map: E/P reads ``profitability.return_on_assets``, so quarantining it drops E/P
+    while the other three measures stay -- the quarantine of a metric that carries no measure's
+    input (the old ``valuation.free_cash_flow_yield``) drops nothing."""
     conn = cycle_seed
+    seed_value_inputs(conn, "2026-06-30")
     run_selection(_cycle_settings(), "2026-06-29", conn=conn)
-    assert _valorization(conn, 1, "2026-06-29")["value"] is not None
+    assert _valorization(conn, 1, "2026-06-29")["measures"]["earnings_yield"]["status"] == "present"
     fid = int(conn.execute("SELECT id FROM sec_filings WHERE asset_id = 1").fetchone()[0])
+    _issue(conn, fid, ("profitability", "return_on_assets"), "DQ_ROA", "HARD")
     _issue(conn, fid, FCF, "DQ_FCF_YIELD", "HARD")
 
     run_selection(_cycle_settings(), "2026-06-30", conn=conn)
-    assert _valorization(conn, 1, "2026-06-30")["value"] is None
-    assert _valorization(conn, 2, "2026-06-30")["value"] is not None
+    measures = _valorization(conn, 1, "2026-06-30")["measures"]
+    assert measures["earnings_yield"]["status"] == "quarantined"
+    assert measures["book_to_market"]["status"] == "present"
+    assert measures["enterprise_fcf_yield"]["status"] == "present"  # not its carrier any more
+    assert _valorization(conn, 2, "2026-06-30")["measures"]["earnings_yield"]["status"] == "present"
 
 
 def test_nee_s_real_10k_now_passes_the_revenue_gate(nee_10k: Any) -> None:
@@ -499,5 +499,7 @@ def test_nee_s_real_10k_now_passes_the_revenue_gate(nee_10k: Any) -> None:
     for group in ("profitability", "cashflow", "efficiency", "leverage"):
         for result in compute_group(group, nee_10k, key):
             fm[(group, result.name)] = StoredMetric(result.value, dict(result.inputs))
-    assert fm[NET].value == pytest.approx(5_332 / 27_412, rel=1e-3)
+    # ID-03 (T-148): net income attributable to NEE, 6,835M -- ProfitLoss (5,332M) includes a
+    # noncontrolling-interest loss of 1,503M that is not NEE's
+    assert fm[NET].value == pytest.approx(6_835 / 27_412, rel=1e-3)
     assert [i for i in evaluate(fm) if i.rule_id == "DQ_REVENUE_POS"] == []

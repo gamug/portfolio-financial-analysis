@@ -24,7 +24,7 @@ Every package calls `kg_schema.ensure(conn)` at the end of its own
 It also holds the shared run seams every agent uses: `env.universe_database_path`
 (`KG_UNIVERSE_DB`, default `/workspaces/thesis/data/universe.db`),
 `queries` (point-in-time reads over `universe.db` — `members_asof`,
-`symbols_asof`, `resolve_asset_ids`, `connect_ro`), `rundate` (the
+`members_over_range`, `symbols_asof`, `resolve_asset_ids`, `connect_ro`), `rundate` (the
 `--analysis-date` argparse type + default-to-today), and `provenance.code_version`
 (git short SHA `+ -dirty`, falling back to the package version then `"unknown"`).
 "Dirty" is scoped, not "any uncommitted file in the checkout": `_git_version` runs
@@ -72,12 +72,17 @@ The single entrypoint. Sequence:
    `sync_universe` run before they write an asset, and the succession table: `cik_succession` is seeded on every
    `ensure` from `src/kg_schema/data/cik_successions.csv` (`seed_successions`), and `cik_chain(db, cik)` is the CIKs an
    asset's filings are fetched under, its own first.
-6. `views.ensure_views(db)` — drop + recreate every `v_*` view. **Skipped, with a warning,
+6. `ticker_history.ensure_seeded(db)` — the as-of ticker history (`T-153` part 2): `ticker_history` is
+   seeded on every `ensure` from `src/kg_schema/data/ticker_history.csv`, one row per symbol of a
+   company's line, each citing the notice that dates it (L-11). It is what lets a renamed company's
+   symbols resolve to one asset (`queries.resolve_asset_ids`) and what `sync_universe` stores a
+   member under.
+7. `views.ensure_views(db)` — drop + recreate every `v_*` view. **Skipped, with a warning,
    when the database's `schema_version` is above the highest migration this code knows**
    (T-144): a later contract may have added columns and views this code does not define, and
    rebuilding would remove them. It protects later code from the next contract change; it
    cannot retrofit code that predates it.
-7. If `run_migrations`: `migrations.apply_migrations(db)`, then rebuild views.
+8. If `run_migrations`: `migrations.apply_migrations(db)`, then rebuild views.
 
 Steps 1–6 are safe to run against the shared production DB at any time,
 concurrently with the other packages. Step 7 runs **only** via `python -m
@@ -109,12 +114,22 @@ Consolidates what used to be split across `version.py` / `universe_source.py` /
 - **`universe.db` reads (read-only, never written here):** `connect_ro`
   (re-exports `kg_schema.db.connect_ro`), `members_asof(universe_db,
   analysis_date, *, universe="SP500") -> list[UniverseMember]` (predicate
-  `valid_from <= D AND (valid_to IS NULL OR valid_to > D)`, deduped by symbol
-  keeping the latest stint; rejects any universe other than `SP500`),
-  `symbols_asof(...)`, and `resolve_asset_ids(financial_db, symbols) ->
-  (mapping, missing)` (pure read, case-insensitive `assets.ticker` match,
-  chunked `in_clause` — creating a brand-new `assets` row stays with the
-  agents' `sync_universe`).
+  `valid_from <= D AND (valid_to IS NULL OR valid_to >= D)` — `valid_to` is the last
+  day of membership, the day before the removal takes effect, inclusive — deduped by
+  symbol keeping the latest stint; rejects any universe other than `SP500`),
+  `symbols_asof(...)`, and `resolve_asset_ids(db, members, *, as_of) ->
+  (mapping, missing)` (pure read; *members* are `(symbol, cik)` pairs. A member with a CIK
+  resolves by its line's canonical symbol from `ticker_history` — so FB and META are one asset
+  — and a matched asset whose CIK differs is *missing*, never merged; a member with no CIK keeps
+  the old case-insensitive `assets.ticker` match. Chunked `in_clause` — creating a brand-new
+  `assets` row stays with the agents' `sync_universe`). **`members_over_range(universe_db,
+  fin_db, start, end, *, universe="SP500") -> list[WindowMember]` (T-153 part 3a)** reads the
+  stints overlapping `[start, end]` (`WINDOW_START` is the backtest window's first session,
+  2022-01-03) and returns **one entry per CIK line**: a company's several stints collapse to one
+  line (CDAY then DAY), coexisting share classes stay separate (DISCA continues as WBD; DISCK is
+  another line), and each entry carries the line's own membership span (`window_from` clamped to
+  *start*, `window_to` `None` for a line still a member) — the bound every ingestion step
+  fetches to. The CIK line comes from `ticker_history` on *fin_db*; membership never does.
 - **Data-coverage report:** `check_coverage(fin_db, universe_db, as_of, *,
   universe="SP500", min_observation_days=504) -> CoverageReport` and
   `persist_coverage(fin_db, report) -> int` (upserts one `universe_coverage`
@@ -131,6 +146,32 @@ Consolidates what used to be split across `version.py` / `universe_source.py` /
   as_of, run_id=None, run_kind=None, source) -> (opened, closed)` — opens
   memberships for newcomers, closes them for the departed. No longer on any
   write path (see `v_universe_membership` below), kept for compatibility.
+
+### `ticker_history.py` — the as-of ticker history (T-153 part 2)
+
+A company is its CIK (APP-10a), so a rename — the same CIK under a new ticker, FB → META — must
+stay **one asset**. Identity is one asset per `(CIK, line)`: a *line* is a maximal chain of one
+CIK's symbols where each symbol begins the day after the previous one ends
+(`valid_from == valid_to + 1`); share classes are separate lines that coexist (GOOGL/GOOG,
+FOXA/FOX, NWSA/NWS) and stay separate assets.
+
+- `HISTORY_CSV` (`data/ticker_history.csv`) is the **source of truth**: one row per symbol with
+  `canonical_symbol` (the line's newest symbol) and the notice that dates it (L-11).
+  `read_history()` parses and validates it; `seed(db)` makes the table **equal** the file on every
+  `ensure` (one transaction: rows the file dropped are removed, a changed `canonical_symbol` takes
+  the file's value, new rows are inserted); `ensure_seeded(db)` is the no-op-on-a-partial-schema
+  wrapper.
+- `canonical_symbol(db, cik, symbol)` (by CIK, so a reused ticker is a different line),
+  `symbol_line(db, symbol, as_of)` (dated), `line_symbols(db, cik, canonical)` and
+  `canonical_for_member(db, *, symbol, cik, as_of=None)` are the reads.
+- `plan_members(db, members)` classifies each member of one dated universe: a member whose CIK
+  already has an asset under another symbol is a **share class** only when another same-CIK member
+  is in the batch **and every** existing asset of that CIK is one of those members' lines →
+  insert; a **recorded rename** → adopt (`MemberAsset.action == "adopt"`, the one existing asset of
+  the line retitled in place, then the member's ordinary refresh); otherwise → `TickerConflict`,
+  **before anything is written** — including a canonical asset sitting beside an old-symbol asset
+  of the same line. `Adoption` / `SyncResult` are what `sync_universe` returns so the run can
+  report each adoption.
 
 ### `market_cap.py` — market capitalisation as of a date (T-132)
 
@@ -223,6 +264,10 @@ are present / it hasn't already run).
 | m010 | marker for the knowledge-graph view contract (`T-144`): changes no table. The new views and appended columns come from `views.py` on every `ensure`; this raises the `schema_version` floor to 10 so the knowledge-graph repo can assert it and `ensure_views` can tell a database that is ahead of the running code (see "The knowledge-graph view contract" below) |
 | m011 | the temporal price vetoes' columns (`T-070`, contract 11), additive: `price_observation.sma_200` / `ret_5d` / `vol_5d` / `mu_60d_base` / `vol_60d_base` (the `priceobs-v2` fields) and `veto.expires_on` / `expiry_history_json`, added with `Database.ensure_columns` from `REQUIRED_COLUMNS` (m009 rebuilds `veto` without them, so this migration puts them back; a fresh database has them from the DDL). Every existing row keeps NULL. `v_price_observation` and `v_veto` gain their appended columns from `views.py` on every `ensure` |
 | m012 | the filing-identity invariant (`T-149`, contract 12): changes no table. Drops and re-creates `ddl.IDENTITY_TRIGGERS` and **refuses (rolls back) a database whose stored rows already break them** — `kg_schema.identity.violations`: an asset with filings and no CIK, an accession on assets of different CIKs, or a filing whose `cik` is outside its asset's chain (a trigger never checks the rows already there) — so a database at contract 12 holds the invariant for every row. `apply_migrations` drops the guards while migrations run and restores them, like the T-107 ones |
+| m013 | `financial_facts.preferred_sign REAL` (`T-148`, contract 13): edgartools' +1/−1 hint, the displayed `value` times it being the value in the filed sign (ID-11/ID-12). Additive, `NULL` on every existing row -- **no backfill**: `financial_facts` is append-only on `(filing_id, statement, concept, period_key, filing_version)`, so a same-accession re-run cannot add it, and a `NULL` reads as the displayed sign, flagged. The fix takes effect on a database rebuilt with the engine that writes it. No view changes |
+| m014 | non-reusable IDs with AUTOINCREMENT (`T-145`, contract 14): rebuilds `cycle_run`, `analysis_run`, `pricing_run`, `quant_run`, and `sec_filings` with AUTOINCREMENT so deleted IDs are never reused; seeds `sqlite_sequence` from the maximum of each table's own ID and all referencing columns; adds read-only check functions `unresolved_run_references` and `invalid_sec_filings_accessions`. |
+| m015 | marker for the orchestrator provenance (`T-012`, contract 15): changes no table. `orchestrator_run` / `orchestrator_step` and their `v_*` views come from `ddl.py` / `views.py` on every `ensure`, so a fresh database has them without migrating; this raises the floor to 15 (as m010 did for T-144's views) and is safe to replay on a database that already has the tables. |
+| m016 | marker for the as-of ticker history (`T-153` part 2, contract 16): changes no table. `ticker_history` (`ddl.py`) and `v_ticker_history` (`views.py`) come from every `ensure`, so a fresh database has them without migrating; this raises the floor to 16 (as m010/m015 did for their views) and is safe to replay on a database that already has the table. |
 
 ### `views.py` — `VIEWS`, `ensure_views(db)`
 
@@ -261,7 +306,11 @@ live name that no optimized book of that as-of date holds — T-042).
 
 **Run-log views** for `portfolio-reports`: `v_analysis_run`, `v_pricing_run`,
 `v_quant_run`, `v_cycle_run` — one row per agent run with `run_id`, `as_of`
-(`cycle_date` for cycle), `code_version`, status, timings and `params_json`.
+(`cycle_date` for cycle), `code_version`, status, timings and `params_json` — plus the
+orchestrator's own `v_orchestrator_run` / `v_orchestrator_step` (T-012): one row per
+orchestrated run (handle, kind, as-of, surface, settings, code_version, status, timings) and
+one per step (handle, ordinal, step, status, timings, exit code, `run_kind`, the step's own
+run-log `run_id`, reason, argv, output tail). `GET /run/{handle}` reads these.
 
 **`v_universe_membership` is frozen.** The agents no longer write
 `universe_membership` (the universe is read point-in-time from `universe.db`), so
@@ -310,7 +359,7 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 
 ### Versions and deployment
 
-- `schema_version` **12** (`m010` is a marker, no table changes; `m011` adds the `T-070` columns below; `m012` is the `T-149` filing-identity guard, no table changes). The views themselves are rebuilt
+- `schema_version` **16** (`m010` is a marker, no table changes; `m011` adds the `T-070` columns below; `m012` is the `T-149` filing-identity guard, no table changes; `m013` adds `financial_facts.preferred_sign`, `T-148`; `m014` adds AUTOINCREMENT on run tables and `sec_filings`, `T-145`; `m015` is the `T-012` orchestrator-provenance marker, no table changes; `m016` is the `T-153` part 2 as-of-ticker-history marker, no table changes). The views themselves are rebuilt
   by every `ensure`, so a database gets them as soon as any process on the new code opens it,
   whether or not it has been migrated; `migrate` is what raises the floor.
 - **Every process that opens the database is upgraded (or stopped) before `migrate` runs.**
@@ -319,7 +368,7 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
   `ensure_views` guard (skip when `schema_version` is above the highest migration it knows)
   protects *later* code from the *next* contract change; it cannot retrofit code that predates it.
 - The production database (`/workspaces/thesis/data/financial.db`) is frozen until `T-100` and
-  stays at its current `schema_version`; a consumer must not raise its floor to 10, 11 or 12 for it.
+  stays at its current `schema_version`; a consumer must not raise its floor to 10, 11, 12 or 16 for it.
 
 ### New views
 
@@ -344,13 +393,33 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
   so the row's effective weights sum to 1 (NULL when that sum is 0). The identity, for a row with
   at least one component:
   `blended_score = sum(effective_weight * component_value) - sum(penalty_points of the row's SOFT rules)`,
-  where the SOFT rules are the `veto_rules_json` entries other than `HARD` and `UNSCORED`, and a rule's
+  where the SOFT rules are the `veto_rules_json` entries other than `HARD`, `UNSCORED` and
+`UNPRICED`, and a rule's
   `penalty_points` is `v_rule_catalog.params_json` `$.penalty_points` (T-070): the points an active stint
   of that rule takes off the score. It is the run's `soft_veto_penalty` (`v_weight_scheme.soft_veto_penalty`,
   15 by default) for every SOFT rule except **`BREAK_TREND_200`, which declares 0** (flag-only: its stints
   stay in `v_veto`, it subtracts nothing); `null` on a HARD rule (it excludes instead). A rule absent from
   the catalog costs the run's `soft_veto_penalty`. So the penalty is no longer "15 × the number of SOFT
   vetoes" (`tests/test_kg_view_contract.py` pins the identity with a `BREAK_TREND_200` hit).
+- **The backtest views** (`m018`, FR-016 / FR-017): `v_book` (one row per `strategy_book` with
+  its run's window, formation date and status), `v_book_rebalance` (decision and execution date per
+  rebalance), `v_guard_alert` (layer, rule, value, threshold, state; `value` is NULL for layer 1),
+  `v_guard_action` (the action a book took: `APPLIED` | `ARM_DISABLED` | `NOT_HELD` |
+  `SUPERSEDED`; `weight_before`/`weight_after` are NULL for asset-level actions), `v_book_weight_daily`
+  (the holdings; `markowitz_target_weight` and `final_target_weight` are NULL unless the row's date is
+  that book's decision or execution date), `v_book_daily_performance` (the portfolio-level columns:
+  gross/net return, turnover, cost, NAV, drawdown, cash weight, number of equities and the
+  `SP500_EW_INTERNAL` benchmark return), `v_portfolio_period_summary` (the `backtest_summary` rows per
+  arm and segment) and `v_backtest_test` (the paired statistics). Every view carries `knowledge_date`.
+  **No backtest view exposes a single asset's price or return:** the only per-asset value any of them
+  returns is a weight (a portfolio share), and the daily weight rows deliberately do not reveal a
+  return — `book_weight_daily`'s daily drift is masked outside a book's decision/execution dates.
+- **`v_ticker_history`** (`T-153` part 2): `cik`, `symbol`, `valid_from`, `valid_to`,
+  `canonical_symbol`, `asset_id` (the one asset the line resolves to), `evidence_url`,
+  `evidence_date`, `rules`. One row per symbol of a company's line; `valid_to` is the symbol's last
+  day. Keyed by CIK — the same symbol reused by another CIK later is a different line, so a caller
+  never merges the two. `assets.ticker` is the line's canonical (current) symbol, so every other
+  view shows the current ticker even on a historical row; join this view for the as-of ticker.
 
 ### Columns added to existing views
 
@@ -393,8 +462,9 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 - **`blended_score`** is 0-100 minus the active SOFT rules' `penalty_points` (15 each by default, 0 for the
   flag-only `BREAK_TREND_200`), so it can go below 0. With no components (all null) it is `0.0` minus that deduction. It is a weighted
   mean over the non-null components, i.e. weights renormalized (`effective_weight` above).
-- **`normalized_score`** is `50 + 10z` over the cohort (z against the 2%-winsorized mean and standard
-  deviation), clamped to [0, 100]; the same function for SECTOR. The cohort mean is near 50, not
+- **`normalized_score`** is `50 + 10z` over the cohort (z against the 0.5%-winsorized mean and standard
+  deviation), clamped to [0, 100]; the same function for SECTOR. DQ-02 (T-071 part 2b, D3): `winsorize`
+  trims `floor(0.005 × n)` values per tail and nothing when `n < 200`. The cohort mean is near 50, not
   exactly 50. FUNDAMENTAL's `normalized_score` is **rewritten by every cycle** (`T-106`), so the stored
   value is the last cycle's; the per-cycle value is `component_value`.
 - **SECTOR `raw_value`** is the asset's TECHNICAL raw score minus its sector's mean, in TECHNICAL
@@ -409,8 +479,8 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
   are `v_weight_component`.
 - **No component** means all components are null (`blended_score` 0.0 before the penalty). Such a
   ranking row has no `v_cycle_ranking_component` rows.
-- **`vetoed`** is true only for a HARD veto (with the T-1 lag) or `UNSCORED`; a SOFT veto only lowers
-  `blended_score`.
+- **`vetoed`** is true only for a HARD veto (with the T-1 lag), `UNSCORED` or `UNPRICED`; a SOFT veto
+  only lowers `blended_score`. All three are ineligible; only the HARD one is a rule.
 - **Timestamps.** Every `*_at` timestamp that a view exposes (`computed_at`, `detected_at`,
   `cleared_at`, `retrieved_at`, `started_at`, `finished_at`, `ingested_at`, `created_at`) is ISO 8601
   UTC written with a `+00:00` offset (`2026-10-04T18:28:56+00:00`). `event_time`, `available_at`,
@@ -426,7 +496,7 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 |---|---|---|
 | `universe_membership` | S&P 500 membership history (**frozen** — superseded by `universe.db`) | `UNIQUE(asset_id, universe, valid_from)` |
 | `universe_coverage` | per-member core-data coverage for a dated universe (from `coverage`) | `UNIQUE(as_of, universe, symbol)` |
-| `score_snapshot` | `ScoreSnapshot` types FUNDAMENTAL / VALORIZATION / TECHNICAL / SEMANTIC / SECTOR | `UNIQUE(asset_id, score_type, event_time)` |
+| `score_snapshot` | `ScoreSnapshot` types FUNDAMENTAL / VALORIZATION / TECHNICAL / SEMANTIC / SECTOR | `UNIQUE(asset_id, score_type, event_time)`; a VALORIZATION row's `inputs_json` carries the v2 components (per measure the value on D, the percentile, the status, the flags and the matrix cell, plus the applicable and present counts, the market cap and EV on D, the share and close dates and the filing's accession — T-071 part 2b) |
 | `rule_catalog` | veto rule definitions | `rule_id` PK |
 | `data_quality_issue` | Ring-1 `DQ_*` gate hits (T-040 / T-065): severity, `quarantined`, the gated value; written by `fundamental_agent`, read by `cycle` | `UNIQUE(filing_id, metric_group, metric_name, metric_engine_version, rule_id, gate_version)` |
 | `veto` | rule-hit stints (`raised_on`/`cleared_on`/`last_seen_on`, T-125), closed not deleted; at most one open stint per `(asset_id, rule_id)` (partial unique `WHERE cleared_on IS NULL`) | `UNIQUE(asset_id, rule_id, raised_on)` |
@@ -446,6 +516,8 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 | `quant_risk_model` / `quant_expected_return` / `quant_covariance` | Markowitz μ / Σ per as-of model; `model_version` = base + manifest tag (`rm-v2+3f9a1c2b`, T-090; `rm-v1` before T-077) | `UNIQUE(as_of, model_version)` / `…(model_id, asset_id, mu_model)` / `…(model_id, asset_id_i, asset_id_j)` |
 | `quant_portfolio` / `quant_position` / `quant_frontier_point` | optimized benchmark books + frontier; `engine_version` = base + manifest tag (`opt-v1+3f9a1c2b`), `manifest_json` records the inputs | `UNIQUE(as_of, kind, frontier_k, engine_version)` / `…(portfolio_id, asset_id, valid_from)` / `…(model_id, k)` |
 | `quant_benchmark_performance` | forward realized / active return of a frozen book | `UNIQUE(portfolio_id, date, engine_version)` |
+| `orchestrator_run` | the orchestrator's provenance, one row per orchestrated run (handle, kind, as-of, surface, settings, code_version, status, timings); written by `api/orchestrator.py` (T-012) | `handle` UNIQUE |
+| `orchestrator_step` | one row per step of an orchestrated run (ordinal, step, argv, status, timings, exit code, `run_kind`, the step's own run-log `run_id`, reason, output tail); written by `api/orchestrator.py` (T-012) | `UNIQUE(orchestrator_run_id, ordinal)` |
 
 ## Gotchas
 
@@ -461,3 +533,33 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 - **`Database` is not a `sqlite3.Connection` subclass** (composition, not
   inheritance) — a connection-specific escape hatch (`set_trace_callback`,
   etc.) goes through `db.raw`, not `db` directly.
+
+## The private import's rows and the price views (T-153 part 3d)
+
+`pricing_agent import-tiingo` writes rows the data may not redistribute, marked per row
+(`price_daily.source`, `price_observation.source`, `corporate_action.source`,
+`quant_return_daily.vendor` = `'tiingo'`). The views that expose a daily price, or a value computed
+from one, do not return them:
+
+| View | Treatment |
+|---|---|
+| `v_price_observation` | row filter, `COALESCE(p.source, '') <> 'tiingo'` -- the column was already published, so no shape change |
+| `v_quant_return_daily` | row filter on the new `vendor` column, appended at the end (the contract's versioning rule) |
+| `v_portfolio_position` | `cost_basis` (a close) NULLed for such a line; the row and its weight stay |
+| `v_corporate_action` | row filter: a dividend value is named by the licence's "-- never a value" rule, and `quant` reads the table, not the view, so returns do not change |
+| `v_fundamental_metric` | `value` NULLed for the five `valuation` metrics (`market_capitalization`, `enterprise_value`, `free_cash_flow_yield`, `sbc_adjusted_fcf_yield`, `enterprise_fcf_yield`) on such a line; the row stays -- a cap is the public cover count times the close |
+| `v_score_snapshot` | a VALORIZATION row's `inputs_json` is NULL (the block is built on the cap); a FUNDAMENTAL row's has the five `valuation.*` keys removed (`json_remove`, fixed literal paths) with its pillars and other metrics kept |
+| `v_cycle_ranking`, the weight and quant views | unchanged -- the rule keeps scores, rankings, position weights and returns built from them; TECHNICAL's stored components stay too (no price is recoverable from them) |
+
+A NULL mark (every row stored before the import existed) stays visible. Marker migration `m017`
+raises the floor to **contract 17**; `tests/test_kg_view_contract.py` pins the column lists and
+`tests/test_tiingo_read_contract.py` asserts each row of the table above.
+
+**The predicate's base table is `pricing_agent`'s, not `kg_schema`'s.** The three views that
+diagnose a line as the import's (`v_portfolio_position`, `v_score_snapshot`, `v_fundamental_metric`)
+read `price_daily`, and `ensure_views` **drops a view whose base table is absent** by design. So on a
+database where `pricing_agent` never ran, those three views do not exist: the read routers and
+`/contract/database` report a missing view (that is what those routes are for), never a `500`. The
+predicate has to be the stored bars themselves --
+`price_observation` would be a wrong test, because a line the import priced has no observation row
+until `--observations` runs for it.

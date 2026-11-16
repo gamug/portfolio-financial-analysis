@@ -9,6 +9,8 @@ with no caps at all fell back to equal weights. Now the build refuses, or -- wit
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
@@ -249,8 +251,20 @@ def test_cycle_and_quant_read_the_same_caps(seeded: Database) -> None:
 
 
 def _cap(asset_id: int, value: float, cik: str | None) -> MarketCap:
+    # by keyword: the provenance fields keep growing as readers record more of their inputs
     return MarketCap(
-        asset_id, value, 1.0, 1.0, "2026-01-01", 1, 1, value, "2026-01-02", 0, 1.0, cik
+        asset_id=asset_id,
+        value=value,
+        shares=1.0,
+        share_count=1.0,
+        share_as_of="2026-01-01",
+        share_age_days=1,
+        filing_id=1,
+        close=value,
+        close_date="2026-01-02",
+        n_classes=0,
+        split_factor=1.0,
+        cik=cik,
     )
 
 
@@ -285,6 +299,14 @@ def test_a_dual_listed_issuer_is_counted_once_and_recorded(seeded: Database) -> 
     seeded.execute("DROP TRIGGER trg_assets_cik_keep")
     seeded.execute("UPDATE assets SET cik = '0001652044' WHERE id IN (5, 6)")
     seeded.commit()
+    # and the universe rows must agree: identity is the CIK, so a member whose CIK differs from
+    # its asset's is missing, never merged (T-153 part 2)
+    universe = sqlite3.connect(os.environ["KG_UNIVERSE_DB"])
+    universe.execute(
+        "UPDATE universe_membership SET cik = '0001652044' WHERE symbol IN ('AS05', 'AS06')"
+    )
+    universe.commit()
+    universe.close()
     dual = run_build_risk_model(_config(risk_model_version="rm-dual"), as_of=as_of, conn=seeded)
     assert dual.market_cap_coverage["dual_listed"] == {"0001652044": [5, 6]}
     assert _run_params(seeded)["market_caps"] == dual.market_cap_coverage

@@ -14,6 +14,7 @@ from sec_xcheck.records import Rec, count
 
 CMD = "uv run python scripts/audit_sec_checklist.py measure --only metrics"
 DEFAULT_TAX_RATE = 0.21
+_RATE_EPSILON = 1e-9
 
 
 def metric(r: Rec, name: str) -> float | None:
@@ -44,20 +45,50 @@ def tax_rate_defaulted_on_loss(r: Rec) -> bool:
 
 
 def nopat_taxed_on_loss(r: Rec) -> bool:
-    """NOPAT on an operating loss is reduced by a tax (MET-03: with operating income <= 0 the tax is 0)."""
+    """NOPAT on an operating loss is reduced by a tax (MET-03: with operating income <= 0 the tax is 0).
+
+    F1 (T-151 part 2 fix 1): on a 10-Q the ratios tax the **TTM** operating income, so the TTM
+    NOPAT is what is read (``nopat_ttm`` / ``operating_income_ttm`` in the ``nopat`` inputs; a
+    database replayed with master's code carries only the rate it used, so the TTM operating income
+    is derived from it)."""
+    if r.form.startswith("10-Q"):
+        i = inputs(r, "nopat")
+        nopat_ttm, ttm_oi = i.get("nopat_ttm"), i.get("operating_income_ttm")
+        if ttm_oi is None and nopat_ttm is not None:
+            rate = i.get("nopat_ttm_tax_rate_value", i.get("effective_tax_rate"))
+            if rate is not None and rate < 1.0:
+                ttm_oi = nopat_ttm / (1.0 - rate)
+        if ttm_oi is not None and nopat_ttm is not None:
+            return ttm_oi < 0.0 and nopat_ttm > ttm_oi
+        return False
     op, nopat = r.value("operating_income"), metric(r, "nopat")
     return op is not None and op < 0.0 and nopat is not None and nopat > op
 
 
 def nopat_on_filed_rate(r: Rec) -> bool:
-    """NOPAT uses the filing's own effective rate where MET-03 says the 21% federal rate."""
-    pretax, tax = r.value("pretax_income"), r.value("income_tax")
-    return (
-        pretax is not None
-        and pretax > 0.0
-        and tax is not None
-        and metric(r, "effective_tax_rate") != DEFAULT_TAX_RATE
+    """NOPAT uses the filing's own effective rate where MET-03 says the 21% federal rate.
+
+    T-151 part 2 (D3): NOPAT now carries its own rate in the inputs (``nopat_tax_rate``; a REIT's
+    own rate is flagged ``nopat_tax_rate_reit_effective``, APP-04c). A database replayed with
+    master's code has no such key -- then the metric's own rate was the rate NOPAT used."""
+    i = inputs(r, "nopat")
+    rate = i.get("nopat_tax_rate")
+    if rate is None:  # master's code: NOPAT used the metric's effective rate
+        pretax, tax = r.value("pretax_income"), r.value("income_tax")
+        return (
+            pretax is not None
+            and pretax > 0.0
+            and tax is not None
+            and metric(r, "effective_tax_rate") != DEFAULT_TAX_RATE
+        )
+    legitimate = (
+        "nopat_tax_rate_reit_effective",  # APP-04c: a REIT is supposed to use its own rate
+        "nopat_tax_rate_reit_no_rate",  # ... and 0 when its pre-tax income is not positive
+        "nopat_tax_rate_operating_loss",  # MET-03: 0 on an operating loss
     )
+    if any(i.get(reason) == 1.0 for reason in legitimate):
+        return False
+    return abs(rate - DEFAULT_TAX_RATE) > _RATE_EPSILON
 
 
 def tax_rate_clamped(r: Rec) -> bool:
@@ -112,7 +143,10 @@ def fcf_conversion_on_nonpositive_income(r: Rec) -> bool:
 
 # ---- APP-07 / N15: negative equity and invested capital
 def roe_on_negative_equity(r: Rec) -> bool:
-    eq = r.value("equity")
+    """ROE computed on negative book equity (APP-07). T-151 part 2 (D2) divides by the *prior-year*
+    equity, so the denominator is read from the metric's own inputs when it is there."""
+    i = inputs(r, "return_on_equity")
+    eq = i.get("prior_equity", r.value("equity"))
     return eq is not None and eq < 0.0 and has(r, "return_on_equity")
 
 
@@ -123,10 +157,14 @@ def de_on_negative_equity(r: Rec) -> bool:
 
 def roic_on_nonpositive_capital(r: Rec) -> bool:
     i = inputs(r, "return_on_invested_capital")
-    eq, debt, cash = i.get("equity"), i.get("total_debt"), i.get("cash")
-    if eq is None and debt is None:
-        return False
-    capital = (eq or 0.0) + (debt or 0.0) - (cash or 0.0)
+    capital = i.get(
+        "invested_capital"
+    )  # T-151 part 2 (D6): the metric's own IC, NCI and STI netted
+    if capital is None:  # master's inputs: invested capital = equity + debt - cash
+        eq, debt, cash = i.get("equity"), i.get("total_debt"), i.get("cash")
+        if eq is None and debt is None:
+            return False
+        capital = (eq or 0.0) + (debt or 0.0) - (cash or 0.0)
     return capital <= 0.0 and has(r, "return_on_invested_capital")
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 
 import pytest
 from portfolio_common.db import Database
@@ -10,6 +11,7 @@ from portfolio_common.db import Database
 from fundamental_agent import db
 from fundamental_agent.db import FilingKey, FilingMeta, SnapshotRow
 from kg_schema.queries import UniverseMember
+from pricing_agent import db as pricing_db
 
 
 def _company(symbol: str, name: str, sector: str = "Technology") -> UniverseMember:
@@ -33,6 +35,19 @@ def test_ensure_schema_is_idempotent(memory_db: Database) -> None:
         r["name"] for r in memory_db.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
     assert {"assets", "sectors", "sec_filings", "fundamental_snapshot"} <= tables
+
+
+@pytest.mark.parametrize("sync_db", [db, pricing_db])
+def test_a_member_with_no_sector_creates_no_sector_row(
+    sync_db: object, memory_db: Database
+) -> None:
+    """T-153 part 3b (D5): the delivered universe file leaves MBC, FTRE and PHIN unclassified, and
+    ``_upsert_sector("")`` returns ``None`` before the INSERT -- so no empty-named ``sectors`` row
+    is ever created, and the asset's ``sector_id`` is NULL (no SECTOR score, declared)."""
+    member = replace(_company("AAPL", "Apple"), gics_sector=None, gics_sub_industry=None)
+    sync_db.sync_universe(memory_db, [member])  # type: ignore[attr-defined]
+    assert memory_db.execute("SELECT COUNT(*) AS n FROM sectors").fetchone()["n"] == 0
+    assert memory_db.execute("SELECT sector_id FROM assets").fetchone()["sector_id"] is None
 
 
 def test_ensure_schema_preserves_existing_assets() -> None:

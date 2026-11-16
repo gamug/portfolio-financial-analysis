@@ -18,7 +18,7 @@ def priced_db() -> Database:
     conn.execute(
         """
         CREATE TABLE price_daily (
-            id INTEGER PRIMARY KEY, asset_id INTEGER, date TEXT, close REAL,
+            id INTEGER PRIMARY KEY, asset_id INTEGER, date TEXT, close REAL, source TEXT,
             UNIQUE (asset_id, date)
         )
         """

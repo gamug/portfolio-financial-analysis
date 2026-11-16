@@ -41,13 +41,13 @@ from cycle import data as cycle_data
 from cycle.config import CycleSettings
 from cycle.orchestrator import run_selection
 from fundamental_agent import db, pipeline
-from fundamental_agent.agents import AnalysisResult, FundamentalAnalyst, _fallback_assessment
+from fundamental_agent.agents import AnalysisResult, FundamentalAnalyst, facts_only_synthesis
 from fundamental_agent.config import Settings
 from fundamental_agent.edgar_client import EdgarClient
 from fundamental_agent.pipeline import RunParams
 from fundamental_agent.statements import REGISTRY, Statements, _parse_period
 from kg_schema import connect, ensure, identity, queries
-from kg_schema.queries import UniverseMember
+from kg_schema.queries import WINDOW_START, UniverseMember, WindowMember
 from kg_schema.versions import MetricVersions, resolve_metric_versions
 from pricing_agent import db as pricing_db
 from pricing_agent.observations import build_observations
@@ -252,23 +252,27 @@ def cmd_triggers(args: argparse.Namespace) -> int:
 
 class _FactsOnlyAnalyst:
     """The pipeline's analyst without the LLM: every metric is computed, the score is the
-    deterministic rule-based fallback (``agents._fallback_assessment``). No network, no spend."""
+    deterministic rule-based fallback (``agents.facts_only_synthesis``, T-073). No network,
+    no spend."""
 
-    def __init__(self, _model: object, model_name: str) -> None:
+    def __init__(self, _model: object, model_name: str, _llm_meta: object = None) -> None:
         self._inner = FundamentalAnalyst.__new__(FundamentalAnalyst)
         self._inner._model = None
         self._inner.model_name = model_name
         self.model_name = model_name
+        self.prompt_hash = "facts-only-no-llm"
 
     def analyze(self, ctx: Any) -> Any:
         computed = self._inner._compute_all(ctx)
         flat = {f"{g}.{r.name}": r.value for g, r in computed}
+        verdict = facts_only_synthesis(computed)
         return AnalysisResult(
-            assessment=_fallback_assessment(flat),
+            assessment=verdict.assessment,
             metrics=computed,
             flat_metrics=flat,
-            used_fallback=True,
+            used_fallback=verdict.used_fallback,
             prompt_hash="facts-only-no-llm",
+            pillars=verdict.pillars,
         )
 
 
@@ -314,9 +318,11 @@ def cmd_pilot(args: argparse.Namespace) -> int:
         args.members_from_prod
     ):  # a cohort outside the pilot universe: the production assets, as members
         members = _members_of(prod, tickers)
-        pipeline._load_members = lambda _s, _d: members  # type: ignore[assignment]
+        pipeline._load_window = lambda _s, _c, _d: [  # type: ignore[assignment]
+            WindowMember(m, WINDOW_START, None, 1) for m in members
+        ]
     else:
-        members = pipeline._load_members(settings, args.analysis_date)
+        members = [w.member for w in pipeline._load_window(settings, conn, args.analysis_date)]
     db.sync_universe(conn, [m for m in members if m.symbol in tickers])
     pricing_db.ensure_schema(conn)
     conn.execute("PRAGMA foreign_keys = OFF")
@@ -610,7 +616,9 @@ def cmd_twitter(args: argparse.Namespace) -> int:
         "2013-11-07",
         "2022-10-28",
     )
-    pipeline._load_members = lambda _s, _d: [twitter]  # type: ignore[assignment]
+    pipeline._load_window = lambda _s, _c, _d: [  # type: ignore[assignment]
+        WindowMember(twitter, twitter.valid_from, twitter.valid_to, 1)
+    ]
     pipeline.FundamentalAnalyst = _FactsOnlyAnalyst  # type: ignore[misc,assignment]
     pipeline.build_model = lambda _s: None  # type: ignore[assignment]
     report = pipeline.run(

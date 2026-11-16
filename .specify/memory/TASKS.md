@@ -15,19 +15,26 @@ renumber; mark a cancelled/superseded task in place instead.
 **🔴 Priority override (2026-09-08 forensic audit; order re-set by the user 2026-10-05)**: Work item 8
 (`T-141`, `T-070`–`T-077`, `T-147`, `T-148`) is the current top priority — a direct audit against production data
 (`data/financial.db`) found live correctness bugs, not open design work. (Closed Work items 1, 3, 5, 6, 7,
-10, 11, 13, 14, 15, 16, 17 and 18 are in `CHANGELOG.md`.) Work item 14 (P0/P1, the second audit's live
+10, 11, 13, 14, 15, 16, 17, 18 and 19 are in `CHANGELOG.md`.) Work item 14 (P0/P1, the second audit's live
 defects) is done 2026-09-30; Work item 17 (`T-131`–`T-133`) is closed 2026-10-02; Work item 18 (the N-ticker
-weight heuristic, `T-134`–`T-139`) is closed 2026-10-05.
+weight heuristic, `T-134`–`T-139`) is closed 2026-10-05; Work item 19 (local follow-ups, `T-144`, `T-152`, `T-142`, `T-145`, `T-083`) is closed 2026-10-12.
 
 **Order (user, 2026-10-05, Work item 8's part re-set 2026-10-07, `T-144`/`T-152` moved first 2026-10-09; scope:
-finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) → **`T-153`** (historical universe) →
-**Work item 19** (local follow-ups: `T-083` → `T-142` → `T-145`) → Work item 2 (orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the
+finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`)) → **`T-153`** (historical universe) →
+**Work item 19** (done 2026-10-12) → Work item 2 (orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the
 full-universe run, last of all, on a *fresh* `financial.db` (see `T-100`'s own entry). Work item 20
 (run-endpoint access control; the repo is not a production version yet) and Work item 4 (SEMANTIC; depends on
 `portfolio-nlp`) and Work item 9's `T-080`/`T-081`/`T-082`/`T-084` (they change what the knowledge graph
 consumes; `T-084` waits on data-mining's `urls.db`) are **deferred until after `T-100`** and are no longer
 prerequisites of it. Work item 3 stays superseded by `T-077` (do not implement). One task per PR throughout,
 each ending with its status commit after approval.
+
+**Two parallel streams (user, 2026-10-11).** Stream A, the metrics chain of Work item 8 (`T-148` part 2 →
+`T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`)), and stream B (`T-142` → `T-145` → `T-083` →
+Work item 2: `T-011` → `T-012` → `T-013` → `T-017` → `T-019` → `T-014` → `T-015` → `T-016` → the code parts
+of `T-153`) run in parallel, one task per PR each. The orchestrator code does not depend on the metric
+fixes; only the final pilot run (`T-143`) does, and it runs after both streams. `T-153`'s replay re-run
+waits for `T-071`.
 
 **Superseded by `T-100` (2026-10-05):** `T-079` (the bundled LLM re-run) — `T-100` starts from a fresh
 database and runs the LLM on every filing, so a separate re-run would pay for the same calls twice — and
@@ -54,7 +61,12 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
       acceptance check is re-scoped to the read routers. Constitution 2.0.0 (MAJOR). Must land before `T-011`
       (a plan that conflicts with the constitution amends it first). → `PLAN.md` Work item 2, step 1
       *(added 2026-10-06; done 2026-10-06, PR #124, constitution 2.0.0, SPEC 1.2.0)*.
-- [ ] **T-011** Implement the sequencing runner: pricing_agent → fundamental_agent → entity_resolution →
+- [x] **T-011** — **done 2026-10-12, PR #143** (approved after one review round: a step that raises now
+  fails the run instead of reporting it completed, and the CLI wrapper prints each step live; real-data
+  run on a 5-ticker scratch database through both the CLI wrapper and HTTP, all nine steps, 95 filings
+  scored by the LLM with the user's approval; the code lives in api/, one subprocess per step, run state
+  in memory until T-012). Implement the sequencing runner: pricing_agent → fundamental_agent →
+  entity_resolution →
       cycle → quant, one `--analysis-date`, exposed as the orchestrator endpoint, the per-step endpoints listed
       in `PLAN.md` step 1 (run handle + a read-only status endpoint), and a CLI wrapper over the same code.
       Relies on each package's existing idempotency rather than re-implementing skip logic. Implements step 1's
@@ -62,14 +74,29 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
       the same on the CLI wrapper; preference flags rejected on the writing path; no `--allow-*` override or
       `migrate` over HTTP). **Also decides where the orchestration code lives** (a new top-level package vs.
       inside `api/`, against Project structure #1's bar). → steps 1 and 2.
-- [ ] **T-012** Record orchestrator-level provenance (step, run_id, start/end, status) reusing the existing
+- [x] **T-012** — **done 2026-10-13, PR #145** (approved with no review round: orchestrator_run /
+  orchestrator_step with v_orchestrator_run / v_orchestrator_step, marker m015 / contract 15; the status
+  endpoint reads the database and survives a restart; a failed provenance write stops the run; GET /runs
+  lists kind=orchestrator from static SQL; verify_pilot's T-012 check). Record orchestrator-level
+  provenance (step, run_id, start/end, status) reusing the existing
       run-log `v_*` pattern; every run endpoint, single-step included, writes a row; the status endpoint reads
       it. → step 3.
-- [ ] **T-013** Per-step failure isolation: an independent step's failure (e.g. `entity_resolution`) does not
+- [x] **T-013** — **done 2026-10-13, PR #149** (approved with no review round: StepSpec.depends_on with the
+  PLAN step 4 graph plus quant_evaluate <- cycle_select; a failed or raising step is `failed` and the run
+  continues, a step with a failed/blocked direct upstream is `blocked`, `not_run` only when the run itself
+  stops; real-data runs on a 5-ticker scratch database through the CLI and HTTP; verify_pilot's T-013 check,
+  T-012's failed-run rule relaxed; SPEC 1.12.0). Per-step failure isolation: an independent step's failure
+  (e.g. `entity_resolution`) does not
       block steps with no real dependency on it; a dependent step (`cycle` on
       `fundamental_agent`/`pricing_agent`, `quant` on `pricing_agent` and `fundamental_agent`, the latter for
       the cover-page share count behind market cap) does hard-block. → step 4.
-- [ ] **T-017** Implement the incremental, upstream-aware run: define each step's pending signal (including
+- [x] **T-017** — **done 2026-10-13, PR #150** (approved after one review round: a read-only
+      `pending` subcommand in pricing_agent, fundamental_agent, entity_resolution and quant; a step runs on
+      its own check or as a dependent of a step that ran pending, cycle_select always runs, a failed check
+      counts as pending; fundamental's data/service failure classifier and exit rule, folded in from
+      stream A; the ER news watermark; real-data runs R1-R3 on a 5-ticker scratch database and the check on
+      a migrated production copy; verify_pilot's T-017 check; SPEC 1.13.0). Implement the incremental,
+      upstream-aware run: define each step's pending signal (including
       `entity_resolution`'s news and `quant`'s corporate actions), run the pending steps plus their downstream
       dependents, append only (NR-007); when nothing is pending, run only `cycle select` (the orchestrator's
       cycle step is always `select`). The semantic check degrades to "no source configured" until Work item
@@ -79,7 +106,14 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
       Likewise, when `KG_NEWS_DB` is not configured or does not exist, `entity_resolution` reports "no news
       source configured", is not pending, and does not fail. → steps 2, 4 and 5; `PLAN.md` acceptance criteria,
       "Incremental, upstream-aware run" *(added 2026-10-06)*.
-- [ ] **T-019** Verify the run endpoints: one endpoint per step in `PLAN.md` step 1; run handle, no held
+- [x] **T-019** — **done 2026-10-13, PR #153** (approved after one review round: 13 clauses of PLAN's
+  "Run endpoints" bullet and step 1's request contract, each mapped to a test; new acceptance tests for the
+  whole-app route table, GET on a run path never starting a run (404 by the status route's shadowing, 405
+  otherwise), no read router reaching api.orchestrator (relative imports included), write connections only
+  on the run path with alias-resolved scanners and positive controls, and the CLI wrapper's contract and
+  settings forwarding; all 11 endpoints run live on a scratch database; PLAN's write-connection wording
+  corrected; no verify_pilot check, by instruction). Verify the run endpoints: one endpoint per step in
+  `PLAN.md` step 1; run handle, no held
       request; the status endpoint is a read-only `GET`; write connections only in the run routers and no read
       router imports a run router (`grep`); no `migrate`/`cycle backfill`/`cycle undo-run` endpoint; the request
       contract holds (preference flags rejected, no `--allow-*` override reachable). → `PLAN.md` acceptance
@@ -88,9 +122,21 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
       pricing → fundamental → entity_resolution → cycle → quant for one `--analysis-date` on a fresh universe
       with no pre-existing data. → `PLAN.md` acceptance criteria, first bullet. *(2026-10-05: the final pilot,
       `T-143`, doubles as this check — one orchestrator run on a fresh database, through both surfaces.)*
-- [ ] **T-015** Verify: killing the orchestrator mid-run and re-invoking it (over HTTP and the CLI) does not
+- [x] **T-015** — **done 2026-10-13, PR #154** (approved after two review rounds: a cross-process run
+  lock beside the database that every child inherits, so an orphaned step keeps it and a re-invocation,
+  or a CLI run beside an HTTP run, is refused; the next run reconciles a dead process's run to `abandoned`;
+  SIGTERM to the CLI and the API's shutdown kill the current child and record `stopped: ...`, also when the
+  stop lands before a step starts; real kills K1-K5 on scratch copies with no completed output rewritten;
+  verify_pilot's T-015 check and T-012's stop rule; SPEC 1.15.0). Verify: killing the orchestrator mid-run
+  and re-invoking it (over HTTP and the CLI) does not
       redo an already-completed step. → second acceptance criterion.
-- [ ] **T-016** Update `SPEC.md` §13 item 3 to the resolved state and reconcile every statement that is true
+- [x] **T-016** — **done 2026-10-13, PR #155** (approved after one review round: SPEC §1's pipeline sketch
+  and overview (`portfolio-app` triggers runs, `portfolio-reports` reads), §4's diagram label and its reading
+  note (this entry's "§3" was a section-number error), §11 step 3, §12's downstream bullet, §13 item 3 marked
+  resolved, and §14's operational-tooling bullet and disposition row; the README "HTTP API" section with the
+  complete route list, the CLI wrapper and `KG_NEWS_DB`; the `api/` row in `docs/README.md`; `docs/api.md`'s
+  configuration, endpoints-table row and "Run behaviour" heading; the architecture artifacts are left to the
+  user; SPEC 1.15.1). Update `SPEC.md` §13 item 3 to the resolved state and reconcile every statement that is true
       only before the orchestrator ships, in the same change as the code: `SPEC.md` §3 diagram label
       (`read-only FastAPI`) and §11 step 3 (`no scheduler or orchestrator is wired in today… read-only
       service`); `README.md` "Read-only HTTP API" section and `docs/README.md`'s `api/` row; `docs/api.md`.
@@ -136,7 +182,7 @@ knowledge graph.
 ## Work item 8 — P1: methodological redesign (supersedes Work item 3)
 
 **Order (user, 2026-10-07; re-set 2026-10-08 after `T-147`'s audit and `phase3_decisions.md`):** `T-141` → `T-077` →
-`T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`.
+`T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`).
 - **Why:** `T-077` (the Carhart estimator over prices and Kenneth French factors) and `T-070` (the price-based
   technical score) read no SEC statement data, so they run while the user builds the SEC data-treatment checklist
   (`T-147`'s input). The audit (`T-147`) then sorts the defects into four tasks, in the order of their dependencies:
@@ -255,6 +301,21 @@ the final pilot, `T-143`.
       2026-10-09 by the PR #127 review: (f) gains N22 and the residual capex item of `T-071`, and D6 is carried by (g).
       Numbers are production's 5,075 filings and the 17,350 filing-columns the pipeline reads (the target, the prior,
       a 10-K's CAGR base, a 10-Q's year-to-date pair); a filing is counted once.*
+      **Status (2026-10-12).** Part 1 — (a) filed signs, (b) precedence incl. ID-03 steps (i)–(iv), (c) income tax, (d) debt and
+      cash incl. N23 — landed in PR #136 (merged af373a6; migration m013, contract 13, SPEC 1.8.1, engine metrics-v6). Part 2 —
+      (e) revenue & bank net revenue map, (f) capex under MET-08/APP-04b, (g) share counts under MKT-01..04, ID-18, ID-13..15, PER-06,
+      (k) cash read with a source, (j) T-070 recalibration, and (i) full acceptance — in PR #140 (engine metrics-v6, docs/model_fixes.md).
+      **The box stays open.**
+      **Split in two PRs (user, 2026-10-11).** **Part 1 landed in PR #136, "fix(fundamental): filed signs, concept precedence,
+      income tax, debt and cash (T-148 part 1)" -- (a), (b), (c), (d)** (engine `metrics-v6`, `m013` / contract 13, SPEC
+      1.8.0, `docs/model_fixes.md` "T-148 part 1"). **Part 2 follows: (e), (f), (g), the `T-070` recheck (j) and the full
+      acceptance (i)**, on `metrics-v6` as well (no non-scratch database is built between the two PRs). The box stays
+      open until part 2 merges. Part 1 also resolved two of part 2's measurements as a consequence of (b)'s precedence:
+      `N3.ocf_continuing_resolved` is 0 (the total concept precedes the continuing-operations one in the registry's order).
+      **Capex is the exception to (b)'s precedence in part 1** (review of PR #136): it keeps master's reading, the first
+      matching row in the statement's order (`LineItem.document_order`), because a concept-first pass reads
+      `PaymentsToAcquireProductiveAssets` -- MET-08 (b)(1)'s flagged fallback, never added to PP&E -- before ETR's own
+      `PaymentsForCapitalImprovements`; (f) writes capex's order under MET-08.
       - (a) **Filed sign (ID-11, ID-12).** Store edgartools' `preferred_sign` (an additive column on `financial_facts`).
         `Statements.get` returns line items in the filed XBRL sign; the `T-117`/`T-140` rebuild arithmetic stays on
         displayed values. **Reject a wrong sign and flag it; do not repair it with `abs()`** (D-06(a); this replaces
@@ -273,7 +334,11 @@ the final pilot, `T-143`.
       - (b) **Precedence (ID-02a, ID-03).** Exact concepts first, in the spec's order, then `standard`, then
         `label_contains`. Net income: `NetIncomeLoss` (attributable to the parent) before `ProfitLoss`, a methodology
         decision, recorded, with its own regression test (a filing that files both); `ProfitLoss` minus
-        `NetIncomeLossAttributableToNoncontrollingInterest` when only `ProfitLoss` is filed. Equity:
+        `NetIncomeLossAttributableToNoncontrollingInterest` when only `ProfitLoss` is filed. **Part 1 implements ID-03
+        literally (review of PR #136), in this order:** (i) `NetIncomeLoss` from any stored statement of the filing and period;
+        (ii) `ProfitLoss` when no income attributable to the NCI is filed on any stored statement (flagged
+        `no_nci_income_filed`); (iii) `ProfitLoss` less `NetIncomeLossAttributableToNoncontrollingInterest` when that total is
+        filed; (iv) else empty, flagged. Equity:
         `StockholdersEquity` first. Measured: equity read from another row in 38 filings
         (5 companies; PM +22.6B vs −12.6B); net income includes NCI in 2,247
         filings (263 companies; 237 on the pilot). **N13, to decide:**
@@ -293,7 +358,9 @@ the final pilot, `T-143`.
         element only when it is the only long-term line, and then flagged "includes finance leases"; a line that
         includes current maturities is not added to `LongTermDebtCurrent` (N4). **ID-02b:** debt = 0 only with no debt line
         at all, no interest concept, and a complete balance sheet (Regulation S-X 5-02 p.1); otherwise a capture failure.
-        **N23 (v1.3):** debt and interest concepts not read today: REIT debt, `OtherLongTermDebtCurrent`, `NotesPayableCurrent`
+        **N23 (v1.3):** debt and interest concepts not read today: REIT debt (**not read in part 1**: no loaded source states
+        debt = `SecuredDebt` + `UnsecuredDebt`, ID-02b, so a REIT that files only those has an empty debt and EV; 211 of
+        5,070 own-period filings, 19 companies -- see `T-151`), `OtherLongTermDebtCurrent`, `NotesPayableCurrent`
         (filed by ED) and `InterestExpenseDebt`; plus interest expense is stored with mixed signs (202 negative of 319 in
         production), to be checked against MET-09's coverage rule. Measured: the D-06(d) order changes 344 filings (53 companies);
         on the filing's own period 840 of 5,075 have no debt line (663 non-financial; 319 file a read interest concept and 177 an unread one;
@@ -351,7 +418,13 @@ the final pilot, `T-143`.
           (e.g. DOW: USD 2.48B + 0.157B), not chosen one over the other;
         - the residual capex item that stood under `T-071` since `T-133`'s review (2026-10-02: filers whose capex is
           `PaymentsToAcquireOtherPropertyPlantAndEquipment` / `...OtherProductiveAssets`, which `T-133`'s single-line
-          lookup leaves empty rather than partial) is now this bullet's, because capex is `T-148`'s scope.
+          lookup leaves empty rather than partial) is now this bullet's, because capex is `T-148`'s scope;
+        - **a case part 2 must get right under MET-08 (review of PR #136): ETR's two 10-Ks** (FY2022, accession
+          `0000065984-23-000014`, and FY2023) file `PaymentsToAcquireProductiveAssets` (106M and 35M) beside
+          `PaymentsForCapitalImprovements` (5.07B and 4.44B). (b)(1) makes the first "a flagged fallback, never added to PP&E",
+          so the answer is the second; part 1 keeps master's document order and reads it
+          (`tests/test_line_item_resolution.py::test_etr_capex_keeps_master_s_document_order_until_met08_is_written`), and the
+          order (f) writes must keep reading it.
       - (g) **Share counts and the other flags (ID-18, MKT-01 to MKT-04, ID-01, ID-09/16, ID-20, ID-13 to ID-15, PER-06).**
         The share-scale corrector **quarantines instead of correcting** (ID-18): Annex A-03 catches the MCD 10⁶ case
         without the correction (6 of 6 corrected filings). Stored valuation: remove the balance-sheet and diluted
@@ -382,6 +455,23 @@ the final pilot, `T-143`.
         `T-070` adds are: operating cash flow (N3), interest expense (the filed sign, `abs()` removed) and cash (N5);
         the debt inputs of `LEVERAGE_EXTREME` change too. `T-148` therefore repeats `T-070`'s calibration check on
         the rebuilt data and reports it.
+      - (k) **Findings of the PR #136 review (all verified 2026-10-12): cash read with a source, the causes of every remaining
+        limitation, and the MET-00 cost in two columns.**
+        - *Cash, read with a source and flagged.* Part 1 leaves the filings with no cash line the registry reads empty (EV and ROIC
+          empty, MET-00). Three cases have a source and are read in part 2, each flagged: (1) a balance-sheet cash line tagged
+          `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents` whose caption names only cash and cash equivalents and
+          with no restricted cash reported (e.g. CSX "Cash and Cash Equivalents" 933M, DHR "Cash and equivalents"; 43 companies).
+          Source: B4 (DQC cash-flow guidance), which requires that element on the cash-flow statement "regardless whether
+          restricted cash is included in the total". (2) A line tagged `CashCashEquivalentsAndShortTermInvestments` captioned
+          "Cash and cash equivalents" (HSIC, TGT, CMI). Source: B4, which describes it as a mis-tag of cash and cash equivalents;
+          EV and invested capital subtract cash and short-term investments anyway (MD-35, MD-02). (3) `Cash` as the only cash line
+          of a non-financial company (ES, SLB, FDXF). Source: B6's definition and B4's list of total-cash elements.
+        - *A causes table in `docs/model_fixes.md`* for every remaining limitation, each with its evidence (the GEHC standard):
+          cash filed only per segment (PCAR, NVR, TXT; the SEC holds no non-dimensional cash total in their 10-Ks since 2024),
+          company-specific or discontinued-operations cash elements (CVX, PODD, GEHC, MDLZ, MMM, AMP, CINF, DVN), REIT debt filed
+          only as secured + unsecured (no source states the identity), and NCI income only in the notes (Mastercard, Ball).
+        - *The MET-00 cost reported in two columns:* "not applicable by rule" (APP-02: EV and ROIC for banks, insurers and other
+          financial firms) and "missing data". The 1,327 EV-empty filings of part 1's `cost` table mix both.
 - [x] **T-149** — **done 2026-10-11, PR #135** (approved after the review's four fixes: APP-10b-3, the `rules` column, T-153's evidence rule, CNP/GEHC tracked). Filing identity (engine `facts-v1` bump if stored facts change; `fundamental_agent`, `cycle`; the
       gateway repo for the period-end field). New from `T-147`; precedes `T-148`. **Must be done before T-153.**
       → `PLAN.md` Work item 8, step 12. Rules PER-02, PER-05, PER-08, ID-07, ID-10, APP-10a, APP-10b, MET-05 (N2).
@@ -431,138 +521,71 @@ the final pilot, `T-143`.
       n1,periods,extra`) shows 0 amendments stored, 0 originals lost to an amendment, the N2 effect separately; regression
       tests for (a), (c), (d), (e), (f), (g); the replaced test named above; database invariant enforced on writes; co-registrant
       utility test passes.
-- [ ] **T-150** Accounting identities with DQ-01 and L-10 (`fundamental_agent/quality.py`; gate version bump). New from `T-147`;
-      runs after `T-148`, whose equity and net-income choices CON-04 and CON-19 verify, so the identities are measured once.
-      → `PLAN.md` Work item 8, step 13. Rules CON-01 to CON-04, CON-06, CON-07, CON-19, CON-08 (as a check on `T-148`'s
-      choice) and DQ-01 (**threshold = max(rounding, 0.5% × |base|)**: within rounding passes, above rounding and below
-      the threshold WARNs, above it is material and the inputs are blocked). **L-10 / DQ-01 rounding term:** `0.5 × unit × terms`,
-      where the unit is inferred when `decimals` is not captured (L-10). The identities read the stored facts of one
-      filing and period (no dimensions), not the metrics, so they are a new gate beside `DQ_*`.
-      Measured (DQ-01 BLOCK, own period): CON-19 44 filings of 2,045 at the source (8 companies) and
-      36 on the stored rows; CON-02 24 of 237 (3 companies: AEP, JKHY, PPL); CON-01 0 at the source,
-      3 stored (KKR); CON-03 and CON-07 nothing at the source; CON-04 4 stored, none at the source (the equity row the
-      resolver chose). CON-06 (the TTM cross-check, 1% relative, SOFT today) aligns to DQ-01. **Acceptance:** the gates
-      reproduce these counts on the same data before `T-148` and show the change after it; hermetic tests on fixtures of
-      a failing and a passing identity per rule, and on the tolerance boundary.
-- [ ] **T-151** Metric dictionary and definitions (engine `metrics-v7`; `fundamental_agent/metrics`). New from `T-147`;
-      **absorbs `T-072`'s EBITDA** (persist EBITDA = operating income + D&A; net debt subtracts short-term
-      investments, audit F7) **and `T-076`'s growth item** (YoY growth empty when the base is ≤ 0, audit F8; `T-076`
-      keeps its skills redesign). → `PLAN.md` Work item 8, step 14. Delivers `docs/metric_dictionary.md`: generated
-      directly from Annex B of `checklist_v1.3.md` (formula, one source, inference flag, 17 formulas "source pending" per D-05
-      until the second author is loaded); renames the audit key `free_cash_flow_to_equity` to `free_cash_flow` (OCF − capex, not FCFE).
-      Definitions and the measured scope:
-      - **MD-02 and MD-35:** invested capital and EV include noncontrolling interest (as MD-02 defines it: redeemable NCI
-        included between liabilities and equity; CON-04's identity when no balance is filed; 0 only with no NCI income;
-        otherwise a capture failure) and net short-term investments (when filed apart from cash); **MD-38:** (NOPAT (MD-05,
-        MET-03's 21%) − (capex (MET-08) − D&A (MD-01) + Δ non-cash working capital)) / EV (MD-35), with non-cash working capital
-        = (current assets − cash − short-term investments) − (current liabilities − short-term debt), its change between the ends
-        of the prior and the current year; empty when a term is missing or the balance sheet is not classified (REITs, banks).
-      - **The applicability matrix as data:** v1.3's matrix (35 metrics × 6 company types → applies, adjusted, or not applicable,
-        with the reason) becomes a data file the code reads, instead of conditions scattered through the code.
-      - **Traceability test:** fails when a metric in the dictionary has no implementation, when an implementation, map entry or
-        veto has no rule ID, or when the code and the matrix disagree.
-      - **Provenance on every metric:** its filing (accession), the XBRL concept of each line item, the rule IDs applied, the
-        flags, and the reason when it is left empty.
-      - **Company card:** for a CIK and a date it prints the profile, the filing used, each line item's concept and value, the
-        rules applied and the result. Used for the thesis and for debugging.
-      - **Gate after every rebuild:** T-147's comparison with the SEC's own data (same CIK and filing) and the golden set
-        (`golden_set.csv`), with a minimum fidelity. A value that doesn't match its own company's SEC data can't reach the scores.
-      - **MET-01 / MET-02:** ROA = operating income × (1 − t) / total assets at the **start** of the year, not
-        applicable to financial firms; ROIC and ROE divide by capital at the end of the prior year, never the ending
-        capital (ROE for banks stays, C2). A 10-Q's "end of the prior year" is the prior 10-K's balance.
-      - **MET-03 / APP-04c:** NOPAT's tax is the 21% federal marginal rate for everyone except REITs (their own
-        effective rate when pre-tax income is positive, else 0), tax 0 on an operating loss. Measured:
-        NOPAT uses the filing's own rate in 4,320 filings (471 companies); it is reduced by a tax on an operating
-        loss in 198 of 203 loss filings; **N10:** `effective_tax_rate` shows 21% when pre-tax income is
-        missing or ≤ 0 in 743 filings (172 companies; L-05 says empty); the 21% default hits
-        125 of 314 REIT filings (15 companies). MET-03 also reports ROIC at the effective rate as robustness.
-      - **MET-09 / N9:** a negative denominator is left out of the continuous score and flagged, not discarded with the
-        sign: **N9** — 177 filings (63 companies) have net cash and positive EBITDA, which T-116 treats as unresolved;
-        net debt/EBITDA with EBITDA ≤ 0 in 41 filings and FCF conversion with net income ≤ 0 in 160.
-      - **MET-04 / PER-12 to PER-14:** growth from a base ≤ 0 is empty and flagged (net income 394 filings,
-        free cash flow 328, operating income 242); a growth or CAGR across the adoption of
-        a standard without restated comparatives is flagged: 4 CAGRs cross ASC 842 and 32 lenders'
-        net-income CAGRs cross CECL.
-      - **N15 / APP-07:** ROIC only when invested capital > 0 (74 filings today); ROE and D/E are not
-        meaningful on negative equity (316 filings, 51 companies). The metric's value is empty; the cycle's
-        ranking decision (D/E = +∞) is `T-071`'s.
-      **Acceptance:** `docs/metric_dictionary.md` generated from Annex B; applicability matrix data file loaded;
-      traceability test passes; metric provenance and company card delivered; post-rebuild SEC fidelity gate enforced;
-      the audit's `metrics` group re-run on a rebuilt database shows 0 for N10, N15 and the MET-03/MET-09 rows;
-      regression tests per definition on real captured fixtures; a `docs/model_fixes.md` entry.
-- [ ] **T-071** Valorization redesign in `src/cycle/scores/valorization.py`:
-      EV-based multiples (`enterprise_fcf_yield` + new `EBITDA/EV`),
-      ROIC replacing ROE in the quality factor, remove the size factor,
-      robust median/MAD intra-sector standardization, sector-specific
-      factors for financials/utilities. → step 2. *(2026-09-25, second audit: also add a
-      coverage floor — `_factor_score` averages whichever factors exist, so a name scored on
-      one of three is indistinguishable from one scored on all — persist per-factor coverage
-      in `inputs_json`, and mark market cap at the cycle date rather than the filing's period
-      end.)* *(2026-09-29 system review, scope addition: compute `earnings_yield` from TTM
-      net income and the as-of market cap (N8 / audit C1) — `orchestrator._valorization` reads
-      `profitability.net_income`/`income_statement.net_income`, neither a stored metric, so the
-      value factor uses FCF yields only; keep FUNDAMENTAL normalization in `cycle_ranking`,
-      not overwritten on the stored snapshot (N9); ROIC is None when invested capital ≤ 0
-      (audit F9). The as-of market cap itself comes from `T-132`'s shared reader.)* *(2026-10-02,
-      `T-133` review, scope addition: sector-appropriate cash-flow measures -- capex for utilities
-      (`PaymentsForConstructionInProcess`, utility/non-utility split lines) and REITs, and for filers
-      whose capex is `PaymentsToAcquireOtherPropertyPlantAndEquipment`/`...OtherProductiveAssets`, which
-      `T-133`'s single-line lookup leaves empty rather than partial; see `docs/model_fixes.md` T-133
-      "Residual scope". **The last item (the `OtherPropertyPlantAndEquipment` / `OtherProductiveAssets` filers) moved
-      to `T-148`(f) on 2026-10-09, with N22: capex is `T-148`'s scope; the utility and REIT items stay here.**)*
-      *(2026-10-08, `T-147`'s audit and `phase3_decisions.md` D-04, D-07, D-13, D-14: scope addition.)*
-      **A company profile as of the date (APP-00, ✗ today; code uses today's GICS sector only):** one profile per
-      `(CIK, date)`, read from `docs/checklist_sec/company_types.csv` (delivered by `T-147`). The CSV has ONE base type
-      per company, the `type` column: `operating`, `article_9`, `article_7`, `other_financial`, `multi_sector_holding`.
-      On top of it come OVERLAYS: REIT (`reit`), multi-class (`multi_class_listed`), negative equity (evaluated from the
-      filing as of the date, not `negative_equity_latest`), and regulated utility (GICS sub-industry Electric, Gas, Multi-
-      or Water Utilities, D-13). The CSV has no validity dates today (it is one snapshot): `T-071` adds them, and `T-153` adds
-      the leavers' rows. Every package reads the company profile (type + overlays) from it and nowhere else.
-      **D-13 (regulated utilities exemption from `NEGATIVE_FCF`; see `docs/checklist_sec/checklist_v1.3.md` Scope, D-13):**
-      regulated utilities (GICS Electric, Gas, Multi- and Water Utilities) are exempt from `NEGATIVE_FCF`. In its place, a HARD
-      veto when the three-year average of operating cash flow before working-capital changes over total debt is below 5% (Moody's
-      scorecard, C13 PDF p.7: Ba 5%–13%, B 1%–5%; C13 p.11, p.14, p.19, p.21; C14 p.38; C15 p.2). Each year's ratio uses only
-      data public on D (the latest 10-K's three years of cash flow, the third year-end debt from the previous 10-K); working
-      capital is current items only, regulatory assets and liabilities stay in the cash flow (C13 p.14); the debt is MET-07's
-      (not Moody's adjusted debt, declared); missing inputs: no veto, flagged; CEG and VST fall inside the exemption through the
-      GICS proxy, AES and NRG do not; report the 5%–12% sensitivity.
-      **D-14 (REITs and `NEGATIVE_FCF`, open):** measure how many REITs `NEGATIVE_FCF` vetoes in the replay first, then
-      decide (APP-04b puts acquisitions in REIT capex, and external funding of negative free cash flow is industry practice).
-      **D-04 (accepted):** `DQ_NEG_EQUITY` becomes **quarantine only** (D/E and ROE read NA, as APP-07 says) and is
-      never a HARD data-quality veto; the distress test for negative-equity firms moves to `LEVERAGE_EXTREME`, keyed on
-      the **equity sign**, never on a negative D/E (the rules read the quarantined metrics, so today the
-      negative-equity branch never runs). Four conditions: (1) **valid inputs only** — the rule reads the equity sign,
-      interest coverage and net debt/EBITDA directly; (2) **EBITDA ≤ 0 is a distress signal** — a net debt/EBITDA that
-      MET-09 leaves empty never reads as "no signal"; T-116's calibrated condition (EBITDA ≤ 0 with positive net debt)
-      is kept and handled explicitly; (3) **not applied to financial firms** (APP-02; needs the company-type table,
-      `docs/checklist_sec/company_types.csv`, APP-00); (4) **the thresholds are a calibrated cycle policy**, declared
-      with a sensitivity analysis and the veto count by sector. Needs `T-151`'s EBITDA. Measured (latest 10-Ks,
-      2026-09-22): 29 companies have negative equity and T-116's three conditions flag 4 of them (CCI, IRM, SBAC, WYNN),
-      with or without the EBITDA ≤ 0 condition; no other fires.
-      **D-07 (decide after the audit):** exclude the financial firms from the universe explicitly (C4 p.3), or keep them
-      with sector-specific factors and corrected vetoes — the current accidental state is kept in neither case.
-      Audit input: 51 financial firms (24 Article 9, 17 Article 7, 10 other) are about 7.5% of the approximate market
-      capitalization; 14 of 51 are hard-vetoed (10 Article 9 filers by `DQ_REVENUE_POS`, 3 by `NEGATIVE_FCF`, KEY by two
-      margin gates), so the vetoes do not exclude almost all of them. The decision rests on those universe-level figures (the
-      market-capitalization share and the veto counts): the pilot replay (the Financials sector averages 22.8% of its
-      book, 13.7% without them) covers 20 names, 3 of them financial firms, so it is not representative of the
-      universe, and production has stored metrics for only 377 filings, so a full-universe replay is not possible
-      before `T-100`. The decision rule (§7 of `phase3_decisions.md`): if the vetoes already
-      exclude almost all and the sector factors are costly, exclude; if the thesis benchmarks against the full S&P
-      500, keep them.
-      **Also here:** the APP-00 overlays and the NA matrix in scoring (APP-01 to APP-04c); DQ-02's one constant,
-      winsorizing at 0.5% per tail: ⌊0.005 × n⌋ values per tail (at n = 495, 245 assets move by more than a point; at n = 20
-      the two fractions are identical); MET-00's neutral 50 in `valorization.compute` (never fires in the stored cycles,
-      0 of 40; keep the guard); and the stored-valuation market cap reading the as-of reader's cover count.
-      N2 (`earnings_yield`) moved to `T-149`.
+- [x] **T-151** Metric dictionary and definitions — **done 2026-10-13, PR #148** (parts 1–3: PR #144, PR #147, PR #148). The entry, its measurements and its open declared limitations moved verbatim to `CHANGELOG.md` ("Work item 8 — `T-151` (closed task)"). → `PLAN.md` Work item 8, step 14.
+- [ ] **T-154** `migrate` must never replay a rebuild on a database that already has the current
+      shape (code fix and hermetic tests only; no pipeline rerun). A database created by
+      `kg_schema.ensure()` alone — the path every agent's `ensure_schema` takes — has the current
+      columns but 0 rows in `schema_version`, so `python -m <agent> migrate` replayed m001…m015 and
+      each rebuilding migration dropped the columns a later release added (`preferred_sign`,
+      `correction_rule`; reviewer A's `mig_repro.py`). **Status (2026-10-13): done — PR #146, reviewed
+      and approved by reviewer A ("ready to merge"; CI green, B's m015 included, production and universe
+      untouched). The open question (align `ensure()`'s DDL with the migrations' target shapes) is
+      decided "no" for T-154 — the real fix is that every rebuild carries the later columns — with the
+      consequence recorded for T-143/T-100: create the fresh database, then run
+      `python -m fundamental_agent migrate` once before any data, so the versioned unique keys exist.**
+      Branch `fix/t154-migrate-replay`; `docs/model_fixes.md` "T-154". D1: every rebuilding migration (m002,
+      m003, m004, m005, m006, m007, m009, m014) checks its target shape first and returns early when it
+      is already there, and each rebuild carries the columns the current code adds; D2: a database that
+      is already at the current shape records every version (`"stamped: created at the current
+      shape"`), so `migrate` applies nothing there. 3.2 (`scripts/verify_t154.py replay`,
+      `out/p2_check.txt`): a copy of `/workspaces/thesis/scratch/t148b/after_full.db` migrated with
+      `preferred_sign` 1,988,623 and `correction_rule` 109 unchanged, its keys widened. Declared
+      limitation (decided by reviewer A, 2026-10-13): a database created by `ensure()` alone is not at
+      the migrations' target shapes (the pre-m002/m003 keys, no `ux_quant_portfolio_book`), so D2 does
+      not stamp it and `migrate` still replays m002/m003/m007/m014 there — no value is lost, and
+      T-143/T-100 must run `python -m fundamental_agent migrate` once on the fresh database before any
+      data. **Correction (T-157, 2026-10-16; reviewer A reversed the limitation):** the agents' DDL now
+      declares the target keys, so a fresh database is born at them and the `migrate`-first consequence is
+      retired — see the `T-157` entry below.
+- [ ] **T-157** *(T-154 follow-up; stream A; branch `fix/fresh-db-metrics-key`.)* A fresh database is born
+      at the append-only key SPEC §5 declares. `fundamental_agent.db.SCHEMA` (the DDL `fundamental_agent
+      run` creates its tables with, through `ensure_schema` and **without** a manual `migrate`) declared
+      the pre-migration keys — `fundamental_metrics UNIQUE (filing_id, metric_group, metric_name)` and
+      `financial_facts UNIQUE (filing_id, statement, concept, period_key)` — while m003/m002 declare
+      `(…, engine_version)` and `(…, filing_version)`. Both tables are append-only per version with
+      `INSERT OR IGNORE`, so a new engine version's (or a new filing version's) row collided with the
+      older one and was **dropped in silence**; it bit on T-156 (the t071c copy's pre-m003 key made a
+      `metrics-v8` recompute write 0 rows until the old version's rows were deleted). **The fix:** the
+      agent's DDL declares m002's/m003's target shape directly (the version column in the key and in the
+      table), so `_m002_at_target_shape`/`_m003_at_target_shape` see a fresh database (T-154's guards
+      unchanged; an old-key database is still upgraded by `migrate`); `kg_schema.migrations.
+      target_unique_key` / `at_target_unique_key` are the public readers, asserted equal to the DDL's key
+      by a test so the two cannot drift; and `record_metrics` / `append_financial_facts` raise
+      `fundamental_agent.db.LegacyAppendOnlyKey` (naming `migrate`) when the table's key is not the
+      target, so a write is never silently ignored. Every other table the run path creates was checked
+      and is listed in `docs/model_fixes.md` "T-157" (`sec_filings`, `fundamental_snapshot` and the four
+      key-less tables are not the same pattern; `quant_portfolio`'s m007 is a missing index, not a
+      narrower key). One existing test updated, not weakened
+      (`tests/test_metric_versions.py::test_versions_with_a_null_engine_version_are_ignored` now builds
+      the pre-m003 table explicitly); `tests/test_fresh_db_key.py` adds 7. SPEC FR-011 and §5 (1.25.0);
+      T-154's declared limitation and the stamp note corrected.
+- [x] **T-071** *(**DONE 2026-10-16** — part 1 PR #156, part 2a PR #167, part 2b PR #169, D-14 closed by the user 2026-10-15. The entry moved to `CHANGELOG.md`.)*
 - [ ] **T-072** *(**Absorbed by `T-151` 2026-10-08 — implement there, not here.**)* Persist EBITDA in `fundamental_metrics`
       (`metrics/leverage.py`/`statements.py`) as operating income + D&A. →
       step 2 (EBITDA sub-task). *(2026-09-29 system review, scope addition: net debt
       subtracts short-term investments (audit F7).)*
-- [ ] **T-073** Fundamental continuous scoring rubric in `agents.py`
-      (4-pillar weighted, one-decimal-place score) eliminating the
-      22-discrete-value quantization. → step 3.
-- [ ] **T-074** `forensic_flags` end-to-end: extend
+- [x] **T-073** The FUNDAMENTAL score built from four pillars — **done 2026-10-14, PR #160** (stream A, step 3). The entry, its measurements and its open declared items moved verbatim to `CHANGELOG.md` ("Work item 8 — `T-073` (closed task)"). → `PLAN.md` Work item 8, step 3.
+- [ ] **T-074** *(**SUPERSEDED 2026-10-14, at the user's direction — do not implement.** Kept
+      unchecked as the historical record, per this file's "mark cancelled in place" rule. Reasons, one
+      per flag: (1) **the veto** — consuming an LLM flag as a `cycle` veto breaks constitution AI
+      behavior #3 ("no LLM call sits on that path"); its motivation (seven old narratives saying
+      "data error") predates T-148–T-151's fixes and T-076's D5, whose deterministic screens withhold
+      suspect values before the model. (2) **`negative_equity_buyback`** is APP-07 / D-04: the
+      negative-equity distress test is a deterministic `cycle` policy in `T-071` part 2.
+      (3) **`value_destroyer_sub_wacc`** needs a WACC, which is not computed; a possible feature after
+      `T-100`, with loaded sources for the cost of equity and of debt. (4) **`severe_sbc_dilution`** has
+      no sourced threshold (MD-37 is a project measure). `score_snapshot.forensic_flags_json` stays
+      `NULL`, which means "not evaluated".)* `forensic_flags` end-to-end: extend
       `FundamentalAssessment`/synthesis JSON schema with the 4 booleans,
       write to `score_snapshot.forensic_flags_json`, consume
       `data_error_suspected` as a `cycle` data-quality veto. `forensic_flags_json` is NULL when the flags
@@ -578,14 +601,7 @@ the final pilot, `T-143`.
       narratives for "data error"/"accounting artifact"/"nonsensical" and
       raise the data-quality veto immediately, ahead of T-073/T-074's full
       re-run. → step 4 (bridge sub-task).
-- [ ] **T-076** *(Its YoY-growth item, audit F8, is absorbed by `T-151` 2026-10-08; the rest stays and runs after `T-151` (PR #127 review, 2026-10-09), its quick-ratio item following `T-151`'s dictionary: D-05, "source pending".)* Skills redesign: 10-Q frequency preamble, tightened
-      valuation magnitude gate (`DATA_ERROR_SUSPECTED` on `|FCF yield| >
-      50%` or scale mismatch), new dedicated `profitability` skill
-      (DuPont, annualization, ROE→ROIC fallback), cost-hygiene trim of
-      `SKILL.md` boilerplate. → step 5. *(2026-09-29 system review, scope addition, before
-      `T-100`'s LLM run: YoY growth returns None when the prior value is ≤ 0 (audit F8);
-      quick ratio as (cash + ST investments + receivables) / current liabilities, and cash
-      ratio tolerant of a missing cash line (audit F5, F6).)*
+- [x] **T-076** The specialist skills rebuilt on the checklist — **done 2026-10-13, PR #152** (step 0, the constitution, PR #151). The entry, its measurements and its open declared items moved verbatim to `CHANGELOG.md` ("Work item 8 — `T-076` (closed task)"). → `PLAN.md` Work item 8, step 5.
 - [ ] **T-077** Carhart 4-factor `ret_estimator` with Vasicek beta
       shrinkage (`mu_i = rf + Σ_k β_i,k^shrunk · λ̄_k` over
       `{MKT,SMB,HML,MOM}`, vendored version-pinned Kenneth French factor
@@ -674,12 +690,18 @@ the final pilot, `T-143`.
       afterward. → `PLAN.md` Work item 8 acceptance criteria.
 - [ ] **T-153** The historical universe (after `T-071`, the last task of Work item 8, and before Work item 19; a prerequisite of `T-100`; needed for PER-10 and PER-11;
       review points 1 and 4 of `phase3_decisions.md` §9–§10 and `checklist_v1.3.md` L-11). → `PLAN.md` Work item 8, step 15.
-      - Point `KG_UNIVERSE_DB` at `/workspaces/thesis/data/universe_history.db`, built by data-mining PR #49.
-        Never overwrite the pilot's `universe.db`.
-      - Read `valid_to` as the last day of membership: `kg_schema/queries.py:124` changes from `valid_to > ?`
-        to `valid_to >= ?` (today `valid_to > D` drops a leaver on its last day).
+      - Point `KG_UNIVERSE_DB` at `/workspaces/thesis/data/universe_history_gics.db` (data-mining
+        PR #51: `universe_history.db` with the leaver stints' GICS filled; sha1
+        `db5b16290b03a191b55215e8b98fc893a93f0e5b`), built by data-mining PR #49. Never overwrite
+        the pilot's `universe.db`.
+      - **Done 2026-10-14, PR #158 (part 1).** `valid_to` is the last day of membership (the day before the
+        removal takes effect, inclusive; confirmed against data-mining's builder, `universe_history.py:245`, and
+        its own `>=` reader): `kg_schema/queries.py:138` `members_asof` reads `valid_to >= ?` (it read `valid_to > ?`,
+        which dropped a leaver on its last day). On `universe_history.db` all 62 leave dates since 2022 gain exactly
+        their leavers (96 stints) and no other day changes; FB is a member on 2022-06-08, PHIN (a one-day member)
+        on 2023-07-05. verify_pilot's T-153a check; SPEC 1.17.0.
       - For the 86 companies that left the index in the window: their filings by CIK, their type in
-        `company_types.csv`, and their GICS classification (the historical source is still to be decided).
+        `company_types.csv`, and their GICS classification (the source is decided below).
       - Then run the replay's figures (vetoes by sector, financial firms, utilities, the D-13 three-year average)
         again on the historical universe before they go into the thesis.
       - Filings of a company that left the index come by CIK; if one of them succeeded a predecessor registrant whose CIK
@@ -692,6 +714,9 @@ the final pilot, `T-143`.
         APP-10b-3's check must also accept the predecessor's last annual report when it is listed under the
         successor's CIK (A7 p.4: the successor files it "unless such report has been filed by the predecessor");
         today's `_last_annual_report_missing` looks only under the predecessor's CIK, which is correct for XOM.
+        **Done 2026-10-14, PR #158 (part 1):** `_last_annual_report_missing` looks under the predecessor's CIK
+        first and only then under the successor's (the run and `pending` pass the same successor); XOM's
+        gateway calls are unchanged (1).
       - **Verified 2026-10-11 against the SEC submissions files (read-only; 2022-2026, 10-K and 10-Q only, current
         members against production's stored filings, leavers against their membership periods):** XOM is the only
         current member whose stored filings are not under its own CIK (18 of 5,076; all `0000034088`). Among the 86
@@ -708,9 +733,160 @@ the final pilot, `T-143`.
           nothing `T-149` builds can fix it: a data-source gap for this task to declare under PER-11 / L-11 and
           measure (dates, the weight they would have had in the index), and to say whether the quant benchmark,
           which reads only prices, can still hold them.
-      - Renames: a company that changes ticker in the window (11 CIKs today: FB→META, FLT→CPAY, RE→EG, CDAY→DAY,
-        WLTW→WTW, DISCA/DISCK→WBD, ECHO→SATS, plus the share classes) must stay one asset across the rename; today
-        assets are keyed by ticker.
+      - **Done 2026-10-14, PR #161 (part 2).** A renamed company is one asset: identity is the CIK's line
+        (APP-10a), read from the tracked, cited `src/kg_schema/data/ticker_history.csv` (L-11; the table and
+        `v_ticker_history`, marker `m016`, contract 16), whose rows are FB→META, WLTW→WTW, RE→EG, FLT→CPAY,
+        CDAY→DAY, SATS→ECHO, DISCA→WBD (DISCK ends 2022-04-10) and PSKY→SKYD (2026-10-06). The share classes
+        GOOGL/GOOG, FOXA/FOX and NWSA/NWS stay separate assets. `sync_universe` adopts a recorded rename in
+        place and refuses an undeclared one; `resolve_asset_ids`, the pending checks and `--tickers` resolve
+        by the member's CIK as of the date. On `universe_history.db` each rename CIK is one asset over
+        2022–2026; a fresh-database pricing run spans FB→META with no break and no `split_jump`.
+        verify_pilot's T-153b check; SPEC 1.19.1.
+      - **Upstream request, leaver prices (blocks `T-100`; reviewer A 2026-10-14):** the pricing gateway
+        serves **no candles** for 37 of the 90 leaver stints over their whole membership (35 lines of 34
+        companies, all of them tickers that no longer trade: acquired, merged or failed, WBD and DAY included);
+        the other 53 are priced on every membership day (measured 2026-10-14, the AAPL calendar). Drafted in
+        `docs/upstream_requests/data_mining_leaver_prices.md`, which replaces the unsent WBD/DAY request. Each
+        line is asked under its last ticker in the index (WBD for DISCA then WBD, DAY for CDAY then DAY, DISCK
+        separately), from 2019-01-02: `quant`'s 756-day `lookback_days` before 2022-01-03. The user sends it
+        with the GICS request. Fallback if a line cannot be obtained: declared under PER-11 with the unpriced
+        names' measured index weight and the direction of the bias, naming each one an acquisition target or a
+        failure (SIVB, SBNY, FRC). **Feasibility (data-mining, 2026-10-14/15): PASS WITH LIMITATIONS** — 33
+        of the 35 lines delivered in full (2019-01-02 → index exit), one **declared exception** (ANSS, below)
+        and two lines **unobtainable**: **INFO** (Tiingo's `INFO` is a reused 2024→ ETF, so no IHS Markit
+        history) and **WRK** (one row, no WestRock history). The **licence is pending Tiingo's written answer**
+        (the free tier is internal-use-only; nothing has been committed). The PER-11 declaration states
+        **INFO's and WRK's index weight, stint dates and exit type** — both acquisitions (IHS Markit by S&P
+        Global; WestRock into Smurfit Westrock) — so the bias direction is stated. Report
+        `/workspaces/thesis/handoff/task_b_feasibility_report.md`.
+      - **The leavers' GICS source (decided by reviewer A, 2026-10-14):** Wikipedia's "List of S&P 500
+        companies" as of each stint's exit. Per stint, take the last revision that still lists the company,
+        dated on or before its `valid_to`. Find the row by CIK, copy the sector and sub-industry names as
+        written, and cite the revision id and timestamp (like L-11's rows). `universe_history.db`'s two GICS
+        columns are empty on all 90 stints of the 86 leavers (measured 2026-10-14), so `portfolio-data-mining`
+        fills them. Drafted in `docs/upstream_requests/data_mining_leaver_gics.md`; the user sends it together
+        with the prices request. Conditions:
+        - A label outside C5's current structure (22 stints of 20 CIKs end before the 2023-03-17 GICS change,
+          for example "Thrifts & Mortgage Finance" and "Data Processing & Outsourced Services") is resolved per
+          company from its own 10-K, as APP-00 does for Article 9/7. There is no general crosswalk table.
+        - The SEC SIC code is a check only, never a source. Report every disagreement between the label and SIC
+          on the types that matter (REIT 6798, utilities 49xx, insurers 63xx, banks 602x), and open each one.
+        - The checklist is frozen. The declaration goes in `docs/model_fixes.md`'s T-153 entry and, as an
+          input for the checklist's next version, not in `checklist_v1.3.md`: "leavers: the classification in
+          force on their last membership day; current members: today's snapshot; a reclassification after exit
+          is not applied" (L-03 / L-11).
+        - **Delivered 2026-10-14, data-mining PR #51:**
+          `/workspaces/thesis/data/universe_history_gics.db`, sha1 `db5b16290b03a191b55215e8b98fc893a93f0e5b`;
+          87 of 90 stints filled, each cited by revision id; MBC, FTRE and PHIN unfilled (one-to-four-day
+          spin-off members the page never listed).
+      - **Remaining:** part 3, split by the two requests (reviewer A, 2026-10-14). They block `T-100`, not the
+        pilot.
+        - **Done 2026-10-14, PR #166 (part 3a).** One ingestion rule for every company:
+          `kg_schema.queries.members_over_range` reads every **CIK line** that was a member at any time in
+          `[2022-01-03, D]`, one entry per line with its own membership span; `fundamental_agent` and
+          `pricing_agent` (and their `pending` checks) ingest to each line's last membership day and nothing
+          after it, `entity_resolution` and `quant` take no wider set, and `cycle` still scores
+          `members_asof(that date)` only. Prices start **2019-01-02** for every company (`quant`'s 756-day
+          `lookback_days` before the window's first session); filings stay in D-10's window (from
+          2022-01-01), each line to its exit. **GPS→GAP and FBHS→FBIN** join `ticker_history.csv` (each
+          cited to the company's own notice; the gateway's GAP/FBIN series cover the GPS/FBHS dates with no
+          break and no `split_jump`; neither becomes an index member). **D8:** 90 stints, 88 lines of 86
+          companies — **53 full, 0 partial, 37 zero** (the zero stints are 35 lines of 34 companies; GPS
+          under GAP 22/22, FBHS under FBIN 242/242), on `kg_schema.trading_calendar`
+          (`scripts/leaver_price_coverage.py`, output `docs/leaver_price_coverage.json`). **D6:** the
+          leavers' last-10-K Article 9 evidence is staged in `docs/leaver_company_types.csv` (86 rows;
+          Article 9: SIVB, PBCT, DFS, CMA, ZION), not merged — the Article 7 / other-financial types and
+          the profile interval need the GICS (part 3b). **The budget:** `scripts/ingestion_budget.py` →
+          `docs/ingestion_budget.json`: **10,216 filings** (current 9,351 / leavers 865) and **646
+          never-latest** filings over each company's own membership sessions (623 current + 23 leavers;
+          8,398,000 tokens at `T-073`'s 11,500 + 1,500). **R6 (i)** (members with no filing public yet) is
+          at or under 0.05 from **2022-03-10** and **0 from 2023-05-04** (`T-155`'s successions removed the
+          0.006 floor); the replay's first date is measured in `T-100`'s own run from the stored pillar
+          statuses, per its entry. verify_pilot's T-153c check; SPEC 1.20.0. Still open from 3a: **SBNY and
+          FRC** enter with no fundamentals — their index weight is measured with part 3b's price fallback,
+          and no substitute source is invented.
+        - **Done 2026-10-15, PR #168 (part 3b).** Every company that left the index gets the same APP-00
+          profile a current member has, in the tracked `src/kg_schema/data/company_profile.csv` — now
+          **584 rows** (495 table + 84 leaver + 5 later joiner), one per CIK. The 84 leaver rows are
+          5 Article 9 (CMA, SIVB, ZION, PBCT, DFS), 1 Article 7 (LNC), 78 operating, 3 REIT (DRE, VNO,
+          AVB), **3 multi-class** (the last 10-K cover's common classes: BIO, TAP, UA/UAA — 18 covers
+          register more than one security, notes and preferred series included) and 0 regulated utility
+          (no leaver is in the Utilities sector); each leaver's interval is `valid_from` 2020-01-01 and
+          `valid_to` **the day after its last membership day** (the profile's `valid_to` is exclusive,
+          the universe file's is the last membership day inclusive). The **5 later joiners** the
+          checklist's table predates are merged under the **current-member rule** (TWLO, VYLR, BE, P,
+          ILMN; the table is built from a database's `assets`, so ILMN — which left in 2024 and rejoined
+          — has its 2022-2024 membership covered too). **SBNY and FRC are untyped**, declared: no 10-K
+          or 10-Q exists, and APP-00's other-financial codes do not include the bank codes. **PBCT's
+          `Thrifts & Mortgage Finance`** is the only leaver label outside **C5**'s current structure
+          (C5 p.11: the Banks group has 40101010/40101015 only), resolved from its own 10-K with no
+          guessed code. **LNC's Article 7** is confirmed on its FY2022 10-K (`0000059558-23-000009`:
+          `PremiumsEarnedNet` present, no `AssetsCurrent`). The **SIC check** (D6) reports 3
+          disagreements (FRC, MOH, PBCT) and changes no label. `T-100` points `KG_UNIVERSE_DB` at
+          `universe_history_gics.db`. verify_pilot's **T-153d** check (every line `members_over_range`
+          returns: each stored filing's period ends are covered by its profile); SPEC 1.22.0.
+        - **Part 3c — done 2026-10-17, PR #173.** A member is usable on cycle date D only with a
+          **non-NULL `priceobs-v2` close on `trading_calendar.last_session_on_or_before(D)`** — C11
+          printed p.36 ("Suspended stocks are generally not added to indices at an upcoming
+          rebalancing") applied by analogy, index addition → selection; reviewer A, 2026-10-16. It
+          replaces `MAX_OBSERVATION_AGE_DAYS` for **eligibility only**: the price vetoes keep their
+          7-day window (declared in `docs/model_fixes.md`). An unpriced member is a **data gap like
+          `UNSCORED`** — a marker in `cycle_ranking`'s `veto_rules_json` with **no `veto` row**, so
+          the backtest credits no rule — and it counts **once per asset, together with the unscored
+          ones**, against `cycle`'s `unscored_max_share` (0.05), in **one refusal** that names the two
+          lists separately (the run's record reports them separately too). The run records the rule it
+          was built on, `manifest['eligibility'] = "session-close-v1"`, so **no pre-3c run is resumed
+          or re-run** under the new code: it must be redone fresh or at another date.
+          verify_pilot's **T-153e** check follows WI-18 (it judges a stint only when its opening run's
+          manifest names the rule, and calls `data.unpriced_assets` itself); SPEC **1.26.0**. **R1:**
+          249 weekly replay dates (222 NYSE sessions), **no refusal changes from the rule**, and the 11
+          line-sessions newly unpriced after the Tiingo import.
+          Found on part 3b's R4 copy: `cycle select` on 2023-03-31 held **CMA (3.4%) and DFS (3.9%)**
+          with no price data at all (`cost_basis` NULL), because a member with a FUNDAMENTAL score is
+          eligible and the price vetoes read a missing observation as "could not tell". Its
+          **measurement** — per weekly replay date, the unpriced members named and classed
+          **Tiingo-dependent** (one of the 33 deliverable lines) or **permanent** (INFO, WRK, a
+          failure's last days) — **feeds the PER-11 declaration**; the full unscored share is measured
+          in `T-100`'s own run. Brief `/workspaces/thesis/handoff/T-153p3c_task.md`.
+          Still open in this entry, per the paragraphs above: the replay's figures — vetoes by
+          sector, financial firms, utilities and the D-13 three-year average — run again **on the
+          historical universe** before they go into the thesis; **SBNY's and FRC's** index weight
+          (measured with part 3b's price fallback, no substitute source invented), which with the
+          whole unscored share — measured in `T-100`'s own run — feeds the PER-11 declaration; and
+          the licence: Tiingo's written answer is still pending, the free tier being
+          internal-use-only.
+        - **Part 3d — done 2026-10-17, PR #174.** The 33 delivered lines the gateway cannot serve
+          are imported from the private file `portfolio-data-mining` fetched (never committed;
+          refused inside a git work tree and on a sha256 mismatch) by `pricing_agent import-tiingo`:
+          `price_daily` rows with `source='tiingo'`, and each line's dividends and splits under its
+          own action engine, the dividend as `divCash / split_cum`. **One vendor per line, no
+          exception:** a line with any stored gateway bar is gateway-only — the import writes nothing
+          for it and names it with its stored count in its own `pricing_run` (`lines_gateway_only`),
+          which on a copy of production is WBD (1,189 gateway rows) and is empty on a fresh database,
+          where WBD is all-Tiingo; the reverse — the gateway later serving a line that holds imported
+          rows — is refused per line (`stage='tiingo_stitch'`, which `pending` treats like
+          `split_jump`). **The read contract:** `v_price_observation` and `v_quant_return_daily` drop
+          the imported rows; `v_portfolio_position`'s `cost_basis`, the five `valuation` metrics in
+          `v_fundamental_metric` and the VALORIZATION `inputs_json` / a FUNDAMENTAL row's five
+          valuation keys in `v_score_snapshot` are NULLed or removed; `v_corporate_action` is
+          filtered; contract **17** (`m017`) records it. Scores, ranks, weights and the returns built
+          from them stay, and TECHNICAL's components stay (declared). **A3:** the valuation group is
+          withheld from the model (`TIINGO_CLOSE`) for such a line. **D10:** the recorded SPLIT events
+          (production 69 rows over 58 assets, the archive the same, the manifest 1) are classed and
+          cited in `src/kg_schema/data/corporate_action_events.csv`, a spin-off's factor applies only
+          while the close is on the pre-event basis (`ex_date > close_date`), and an unlisted SPLIT
+          row refuses the market cap and stops the import. **D9:** if Tiingo says no, the file and
+          every copy are deleted and the database is discarded and rebuilt without the import — no
+          in-place deletion command. verify_pilot's **T-153f** check asserts that no filtered view
+          returns an imported row, that no line mixes vendors and that the run record's counts equal
+          the database's. SPEC **1.27.0**. Brief
+          `/workspaces/thesis/handoff/T-153p3d_task.md`.
+        - Resolved by `T-155` (PR #165): row `0002041610` ← `0000813828` -- the file's SKYD interval
+          before 2025-08-07 belongs to Paramount Global, a CIK succession, not a rename.
+
+- [x] **T-155** The current members' CIK successions — **done 2026-10-14, PR #165** (stream A, step 3a). The entry, its measurements and its open declared items moved verbatim to `CHANGELOG.md` ("Work item 8 — `T-155` (closed task)"). → `PLAN.md` Work item 8, step 3a.
+
+- [x] **T-156** EBITDA coverage: what the rules allow us to recover — **done 2026-10-16, PR #170** (stream A, step 3c). The entry, its measurements and its open declared items moved verbatim to `CHANGELOG.md` ("Work item 8 — `T-156` (closed task)"). → `PLAN.md` Work item 8, step 3c.
 
 ## Work item 9 — P2: entity-resolution sanitization and `v_quant_vs_live` consumption — `T-080`/`T-081`/`T-082`/`T-084` DEFERRED until after `T-100`
 
@@ -736,138 +912,6 @@ of `T-100`. `T-083` (local: our API reading `v_quant_vs_live`) moved to Work ite
       code-level fix only. → `PLAN.md` Work item 9 "Blocked by missing
       data" note.
 
-## Work item 19 — Local follow-ups before the final pilot
-
-Added 2026-10-05, at the user's direction (scope: finish this repo first). Local work that needs nothing
-from another repo, placed above Work item 12 so it merges before the final pilot (`T-143`). One task per PR,
-each ending with its status commit after approval. → `PLAN.md` Work item 19. Order: `T-144` → `T-152` first (moved ahead of Work
-item 8 on 2026-10-09: the knowledge-graph repo is waiting on the contract), then `T-083` → `T-142` → `T-145` after
-Work item 8. `T-144` and `T-145` record the knowledge-graph view changes the user approved 2026-10-06
-(the knowledge-graph repo already references these two ids); they are the schema and `v_*` contract changes
-that constitution AI behavior #10 asks to be approved first.
-
-- [ ] **T-083** *(moved from Work item 9, text unchanged)* Update `api`/`kg_schema` read paths to consume the
-      rewritten `v_quant_vs_live`. **Needs T-042.** → `PLAN.md` Work item 9, step 4.
-- [ ] **T-142** PR #112 review follow-ups, each with a regression test (item (d) is documentation):
-      - (a) `cycle/orchestrator.py`: catch `BaseException` and call `conn.rollback()` before writing a
-        failed checkpoint or a failed `cycle_run` (today a failure partway through a step saves its
-        half-written writes, and a Ctrl-C leaves the run at `running`).
-      - (b) `quant/db.py`: remove the inner `conn.commit()` from `insert_risk_model`,
-        `insert_expected_returns`, `insert_covariance`, `insert_portfolio`, `sync_positions` and
-        `insert_frontier_points`, so each run commits once at `finish_run`.
-      - (c) `/portfolio/ranking`: take the latest cycle date only from runs with
-        `status = 'completed'` (join `v_cycle_run`; no view change).
-      - (d) Document the units of `planned_units`, `completed_units`/`skipped_units` and
-        `failed_units` in `docs/fundamental_agent.md` and the `v_analysis_run` notes.
-- [x] **T-144** — **done, PR #129.** The knowledge-graph view contract, one additive change (`kg_schema` views, DDL notes and
-      `docs/kg_schema.md`). → `PLAN.md` Work item 19, step 3.
-      **Moved first, 2026-10-09** (with `T-152`, ahead of Work item 8; nothing in Work item 8 changes a view).
-      Production is frozen until `T-100` and stays at `schema_version` 8 (`m009`, the veto stints, was never
-      applied to it): the acceptance builds the views on a *copy* of it and on the pilot, and the knowledge-graph
-      repo keeps its floor at or below the database's own version for the production database. `v_quant_vs_live` loses two filters, so it returns more rows: the PR lists every reader
-      (today only tests, e.g. `tests/test_quant_pipeline.py`) and shows each one updated or unaffected.
-      - `v_fundamental_metric` (new): `ticker`, `asset_id`, `filing_id`, `metric_group`, `metric_name`,
-        `metric_id` (`metric_group || '.' || metric_name`, joins to `v_rule_catalog.param_metric`), `unit`,
-        `value`, `engine_version`, `is_current`, `event_time`, `available_at`, `run_id`.
-      - `v_score_snapshot`: add `forensic_flags_json` and `prompt_hash`; `available_at` returns the cycle
-        date for TECHNICAL, VALORIZATION and SECTOR rows (the stored column and FUNDAMENTAL rows are
-        unchanged).
-      - `v_shared_executive_edge`: add `computed_at` (`MAX`) and `run_id`.
-      - `v_cycle_ranking`: add `cr.status`, and fix its docstring.
-      - `v_quant_vs_live`: add `engine_version` and `is_current`, and drop `equal_weight`/`cap_weight` from
-        its filters. `v_quant_portfolio`: add `is_current`.
-      - `is_current`: for metrics, the version `resolve_metric_versions` picks with no explicit selection; for
-        quant, the newest `opt-v*` per `(as_of, kind)`. At most one current row per key.
-      - `v_cycle_ranking_component` (new): `cycle_run_id`, `asset_id`, `score_type`, `component_value`,
-        `configured_weight`, `effective_weight`; one row for every non-null component of every ranking row,
-        vetoed or not.
-      - `docs/kg_schema.md` documents: `blended_score` is 0–100 minus the run's `soft_veto_penalty` (15 by
-        default) per SOFT veto, and 0.0 minus that deduction with no components; SECTOR `raw_value` is in
-        TECHNICAL points, [−100, 100]; `normalized_score` is 50 + 10z over the cohort, clamped to [0, 100], the same for SECTOR; FUNDAMENTAL's `normalized_score` is
-        rewritten by every cycle, so the per-cycle value is `component_value`; the units (`ratio`, `x`,
-        `usd`); weights and caps are fractions of the book, caps are effective on SELECTION runs and
-        configured (possibly NULL) on MONITORING runs; `scheme_id` is the position-weighting rule, not the
-        blend; no component means all components null; `vetoed` is HARD or UNSCORED only; the timezones of
-        the `*_at` columns; the forensic-flag keys.
-      - A marker migration that bumps `schema_version` (run through `migrate`, FR-011). `ensure_views` drops
-        and recreates every view from the running code's definitions, so an older process that runs `ensure`
-        against a migrated database would remove the new columns and views: every process that opens the
-        database is upgraded (or stopped) before `migrate` runs, and `ensure_views` skips its rebuild when
-        the database's `schema_version` is above the highest migration the code knows (protects later code
-        from the next contract change; it cannot retrofit code that predates it).
-      - **Acceptance**: the views build on a copy of production and on the pilot; `available_at` is
-        non-NULL and ≥ `event_time` on every row of `v_fundamental_metric` and of `v_score_snapshot`'s
-        FUNDAMENTAL, TECHNICAL, VALORIZATION and SECTOR rows (SEMANTIC rows are not written until Work item
-        4); at most one `is_current` row per key; for a (run, asset) with
-        at least one component, the effective weights sum to 1 and Σ(effective weight × `component_value`) −
-        `soft_veto_penalty` × (number of SOFT vetoes) = `blended_score`, where `soft_veto_penalty` is the
-        run's (`params_json`, `v_weight_scheme`) and the SOFT count is the `veto_rules_json` entries other than
-        `HARD` and `UNSCORED`; every non-null component has a row; existing view columns are unchanged in
-        names, order and values, except `v_score_snapshot.available_at` on TECHNICAL, VALORIZATION and SECTOR
-        rows (NULL → the cycle date).
-      - **Status (2026-10-09): done, PR #129** (approved 2026-10-09). Marker migration is `m010` (`schema_version` 10).
-        Production's `financial.db` is at `schema_version` **8**, not 9 (`m009`, the veto stints, was never
-        applied to it); it stays frozen until `T-100`. Work item 19 still has open tasks, so nothing moves to
-        `CHANGELOG.md`.
-- [x] **T-152** Publish the `v_*` view contract over the API (knowledge-graph request, local
-      `docs/kg_requirements/kg_handoff_view_contract_endpoint.md`; accepted by the user 2026-10-09; SPEC FR-014).
-      Metadata only, never rows. **Follows `T-144`.** → `PLAN.md` Work item 19, step 5.
-      - `GET /api/v1/contract`: `contract_version` (the highest migration version the running code knows,
-        `kg_schema.migrations.MIGRATIONS`), `code_version` (`kg_schema.provenance.code_version()`), and `views`:
-        every view of `kg_schema.views.VIEWS`, in its order, each with `name`, `frozen` and its `columns` in order
-        (names; a type only if it is free). Built from the code, by building the views in an in-memory database the
-        way `tests/test_kg_schema.py` does and reading each view's columns, never from a hand-kept list. `frozen`
-        comes from a machine-readable set in `views.py` (today `v_universe_membership` is frozen only in a
-        docstring).
-      - `GET /api/v1/contract/database`: `schema_version` (`MAX(version)` of `schema_version`; 0 when the table is
-        missing or empty), `views_present` and `views_missing` against `VIEWS`, the database opened `mode=ro`.
-      - Both in a read router (FR-014): `mode=ro`, no side effects, the read routes' authentication and nothing more.
-      - The rule, in `docs/api.md` and `docs/kg_schema.md`: within one `contract_version` columns are only added,
-        never renamed, removed or reordered; every migration raises `contract_version`, whether or not it changes a
-        view.
-      - Tests: the response lists exactly the views and columns of the in-memory build, in order (a view added to
-        `VIEWS` and missing from the response fails); `contract_version` equals the highest migration;
-        `/contract/database` on a partial database names the missing views; no write-capable connection in the
-        router module (FR-014's check).
-      - The PR carries a sample response of each route; the knowledge-graph repo gets the commit, the routes and
-        the sample.
-      - **Status (2026-10-09): done, PR #130** (approved 2026-10-09). Both routes (`/contract` and
-        `/contract/database`), 10-column `quant_run` pin, hermetic tests. Work item 19 still has open tasks
-        (`T-083`, `T-142`, `T-145`), so nothing moves to `CHANGELOG.md`.
-      **Acceptance:** the tests above; a `GET /api/v1/contract` against a running instance returns every view with
-      its columns in order and `contract_version` (10 once `T-144`'s marker migration has landed).
-- [ ] **T-145** Non-reusable ids. → `PLAN.md` Work item 19, step 4.
-      - `AUTOINCREMENT` on `cycle_run`, `analysis_run`, `pricing_run`, `quant_run` and `sec_filings`: in the
-        DDL, plus a migration for existing databases (`migrate`, FR-011), tested on a copy — foreign keys,
-        `T-107` triggers and views intact. The rebuild seeds `sqlite_sequence` with the highest id referenced
-        anywhere (each table's own rows and every `run_id`/`filing_id` column that points to it), so an id
-        deleted before the migration is not reused; the test deletes a referenced highest row and checks that
-        the next id exceeds it. The seeding and `verify_pilot.py`'s run-type check share one explicit map
-        from each `run_id` column to its run table (`score_snapshot.run_id` depends on `run_kind`;
-        `shared_executive_edge.run_id` points to `cycle_run`).
-      - `scripts/verify_pilot.py` checks that every `run_id` resolves to a run of the right type, and that
-        `sec_filings.accession_number` is never NULL and is unique.
-      - No production write: the orphaned edge run ids disappear with `T-100`'s fresh database.
-- [ ] **T-159** Test the dev-container image built from the root `Dockerfile`. → `PLAN.md` Work item 19, step 6.
-      Local work, no production write. **Placement (proposed, awaiting the user's confirmation):** outside the
-      priority chain; it does not gate `T-143` or `T-100` and can run at any point.
-      - Build it through the Dev Containers CLI (`devcontainer up --workspace-folder .`) with `THESIS_HOST_DIR` set,
-        not only `docker build`; check `/workspaces/thesis` is mounted and `UV_LINK_MODE=copy` is set. Run it from
-        the Windows host the maintainer uses (bind mount path, `setx` variable) and check `scripts/init.sh` runs
-        with LF endings.
-      - `postCreateCommand` (`scripts/init.sh`) finishes: `uv sync --frozen --group dev`, `pre-commit install`,
-        `gh` and Claude Code installed. Record whether `gh` should move from `init.sh` (`sudo apt` on every
-        create) into the Dockerfile.
-      - The host's `.venv` is a Linux one created by the container, so host-side `git commit` finds no
-        `pre-commit` (the hook's `INSTALL_PYTHON` is `/workspaces/…/.venv/bin/python`). Record the host-side
-        workaround or fix it.
-      - Inside the container, the quality gates CI runs pass: `uv run pytest -q`, `ruff check`, `ruff format --check`,
-        `mypy --config-file .code_quality/mypy.ini src tests`.
-      - `uv` tab completion works in a new bash shell; the VS Code extensions and settings in `devcontainer.json` apply.
-      - Decide, and record in `docs/`, (a) how `UV_VERSION` is bumped and (b) whether CI builds the image
-        (`docker build .`) so the Dockerfile cannot rot silently.
-      **Acceptance:** each check above has its output (or "not run, why") in the PR description.
-
 ## Work item 20 — Run-endpoint access control — DEFERRED until after `T-100`
 
 **Deferred 2026-10-06 (user: not a production version yet).** → `PLAN.md` Work item 20; `SPEC.md` FR-015.
@@ -878,6 +922,32 @@ that constitution AI behavior #10 asks to be approved first.
       Numbered `T-144` in PR #124; renumbered 2026-10-06, before any work started, because the
       knowledge-graph repo already referenced `T-144`/`T-145` as the view tasks — a one-time exception to the
       stable-ID rule.)*
+
+## Work item 23 — Dev-container image test (outside the priority chain)
+
+**Placement (user, 2026-11-16): outside the priority chain**; gates neither `T-143` nor `T-100`. → `PLAN.md` Work item 23.
+
+- [ ] **T-164** Test the dev-container image built from the root `Dockerfile` (first numbered `T-159` in PR #199;
+      renumbered before any work started, master having taken `T-159`). Local work, no production write. Each
+      check below is recorded in the PR description as command, output and pass/fail (or "not run, why"):
+      - `devcontainer up --workspace-folder .` from the Windows host with `THESIS_HOST_DIR` set: exit 0;
+        `/workspaces/thesis` is mounted (`ls` lists the shared files); `echo $UV_LINK_MODE` prints `copy`;
+        `scripts/init.sh` has LF endings (`file` reports no CRLF).
+      - `postCreateCommand` (`scripts/init.sh`) exits 0: `uv sync --frozen --group dev`, `pre-commit install`,
+        `gh --version` and `claude --version` succeed.
+      - The host's `.venv` is a Linux one created by the container, so host-side `git commit` finds no
+        `pre-commit` (the hook's `INSTALL_PYTHON` is `/workspaces/…/.venv/bin/python`). Reproduce it, then
+        record a host-side workaround or fix it.
+      - Inside the container the CI gates exit 0: `uv run pytest -q`, `uv run ruff check --config
+        .code_quality/ruff.toml .`, `ruff format --check`, `uv run mypy --config-file .code_quality/mypy.ini src tests`.
+      - `uv` tab completion works in a new bash shell (`uv sy<TAB>` completes); the extensions and settings of
+        `devcontainer.json` are applied (`ruff` is the Python formatter).
+      - Decisions, each written to `docs/devcontainer.md` (new; linked from the README and `docs/README.md`):
+        (a) how `UV_VERSION` is bumped; (b) whether CI builds the image (`docker build .`), so the
+        Dockerfile cannot rot silently; (c) whether `gh` moves from `init.sh` (`sudo apt` on every create) into
+        the Dockerfile.
+      **Acceptance:** every check above has its output in the PR description, and `docs/devcontainer.md`
+      holds decisions (a)-(c).
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
@@ -905,11 +975,73 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       merged change). It measures `T-140`'s acceptance and doubles as `T-014`'s check (one orchestrator
       run, through both HTTP and the CLI wrapper, runs everything on a fresh database). If it fails, fix
       and re-run before `T-100`. → `PLAN.md` Work item 12.
+      **Split by the user, 2026-10-16 (plan `/workspaces/thesis/handoff/T143a_plan.md`):** the pilot is two
+      parts. **Part A** is metrics and rules only -- no LLM, a fresh database, the whole historical universe
+      (about 586 lines), checked against sources outside our code. Its P1 prerequisite,
+      `fundamental_agent run --metrics-only`, is **done 2026-10-18** (PR #176, this entry's status commit).
+      **The 2019-2024 SPLIT citations: done 2026-10-18, PR #175** (105 cited events, the DD
+      `reverse_split_spinoff` class, `scripts/unexplained_split_rows.py` as the gate, verify_pilot T-153g,
+      `scripts/check_event_quotes.py` 105 OK).
+      **Part B** comes later: the LLM on a few companies, then the orchestrator end to end (it still closes
+      `T-014`). `T-100` still waits for both.
+      **Part A, status (2026-10-24, reviewer B):** the pilot_a3 re-run ran on a **fresh** database
+      (`/workspaces/thesis/pilot_a3/financial.db`, sha256 `d2b757b4…68fb8`, tag
+      `pilot-a-2026-10-23` on `564127c`, gateway data-mining `165aae8`, analysis date
+      **2026-10-18**, 591 lines / **10,196 filings**); the report is `docs/pilot_a3_report.md`
+      (PR #184). The acceptance, per layer:
+
+      | the layer | the result |
+      |---|---|
+      | **V1** (integrity) | `verify_pilot.py`: **40 checks, 7 FAIL, 2 WARN** — **T-108**, **T-111** and **WI-18** (not built in part A), **T-131** (MRNA 2026-08-19 — the declared real move), **T-140** (27 `DQ_REVENUE_POS` filings, the known class (a) gateway drops), the **618 valuation filings with a stored price but no market cap** (the T-132 state), and **T-153g** (CTVA 2026-10-01 — **expected 1**, pilot_a2's declared row; the brief's 0 was B's error). WARNs: the T-140 quarters with recorded run errors (APO, ARES, DELL, ENPH) and the **7 JPM stale-metrics rows** (restart order; one FY2024 market cap +1.06 %, declared). Point-in-time **0**, identity **0**, CNP 2022Q1/2022Q3 correct, market cap **70 of 72 events measured, 70 OK, 0 combined refusals**, idempotency **0 rows written**; FISV 2025-11-12 is the one declared session gap |
+      | **V2** (the SEC cross-check) | `signcheck.py`: **0 FLIPPED**; `fidelity --golden`: **0 items below the 98 % gate**, **63** known debt/D&A/revenue pairs. The raw `precedence.py`/`itemcheck.py` rows are T-159a **tooling gaps** (the substitute tier and `concept_flags`/resolver concepts), not stored-value changes — **T-160** |
+      | **V3** (the metrics recomputed independently) | **357,231 rows compared; 357,195 agree; 36** are the known FOX/NWS market cap (MKT-03); **0 unexplained** |
+      | **V4** (the rules recomputed independently) | **80,490 common rows; 0 hit and 0 severity disagreements**; the 8,049 `EARNINGS_MISSING` rows are the `evaluated`-flag class (part A writes no FUNDAMENTAL score); the MPC `NEGATIVE_FCF` row is gone (T-159c's F8 fix) |
+      | **V5** (the human-readable sample) | **190 match, 4 differ, 19 card empty (7 known, 12 by rule), 12 both empty**; the 4 are CINF (`NotesPayable` on T-159a's rejected list), CPAY (securitization facility excluded by the reader's own note), CRWD (F5a D&A) and VMRK (APP-04b REIT capex) — each explained |
+      | **V6** (the earlier decisions' evidence) | D-13: 29 utilities, **`below_5_on_both_bounds` [] in both**, 27 vs 26 with both bounds, **114 field differences** from T-159a's debt components; multi-class and REIT capex **0 differing rows**; weights spearman **0.995491 vs 0.995434**; **no decision reopened** |
+
+      **Declared limitations (one line each; evidence in `docs/pilot_a3_report.md` unless named):**
+      **CTVA 2026-10-01** (T-153g, expected 1); **MRNA 2026-08-19** (T-131, real move,
+      `out/a3_v1_open_items.md`); **FISV 2025-11-12** (one-session source gap,
+      `out/a3_v1_open_items.md`); **T-140's 27 `DQ_REVENUE_POS` filings**
+      (`out/a3_p3_v1_verify_pilot.log`); **the 618 valuation filings with no market cap**
+      (the T-132 state, same log); **JPM FY2024 market cap +1.06 %** (restart order; one value;
+      DECISIONS row 55); **the TTM tag mix** (→ **T-161**; DECISIONS row 58).
+      **Part A done 2026-10-24 (PRs #176, #175, #177–#184).** T-143's box stays open for part B.
+      **Final pilot database (2026-10-30):** audit rounds #3–#15 (`docs/model_fixes.md`, records in
+      `docs/pilot_a3/`) made `pilot_a3/financial.db` the real database; the engine changes, the cover-audit data and the
+      list of the scripts that applied them are one PR (`feat/final-db-engine`). `T-143` part B (the LLM run) and `T-100` are unchanged.
+
+      **The declared pilot finding that gates `T-100` (the user's decision, 2026-10-22 — finish the pilot
+      first, fix after):** `handoff/T143a_empty_values_finding.md` (v3) — **the filed values the pipeline
+      reads are right** (fidelity ≥ 99.8 %), **but two stored totals are too low**: **F6** total debt in
+      **1,636 filings / 111 companies** (+44 filings F6c), median 5.5 % of the total; **F7** D&A in **73
+      filings / 12 companies** (finding v3 §1); and **F8** (V4): CON_08 reads the discontinued operating
+      leg only under `CashProvidedByUsedInOperatingActivitiesDiscontinuedOperations`, so a filer that
+      reports it as `NetCashProvidedByUsedInDiscontinuedOperations` is quarantined without cause (all 4
+      CON_08 filings of the pilot: 12 quarantined metric rows). Further, **96,855 of 356,993 values
+      (27.1 %) are empty** and **17,363 (4.9 %) are empty although the filing holds them** (F0 499, F1
+      9,810, F2 731, F3 332, F4 690, F5a 4,045, F5b 1,256); short-term investments' defaulted 0 is wrong
+      in **1,188 filings**. It is a **declared finding, not a V-layer FAIL** — and it becomes **`T-159`**,
+      which blocks `T-100`.
+      **The acceptance amendment (the finding's §6):** FAIL on an empty input whose filing's own XBRL
+      holds a non-dimensional fact of the item's own concept at the read column's period, on a defaulted 0
+      the filing contradicts, **and on a stored total (debt, D&A) that omits a filed line its own
+      calculation tree places in it**; fidelity ≥ 98 % per item; after `T-159` only the listed,
+      declared exceptions remain.
       **SEC cross-check (user, 2026-10-07, with `T-147`/`T-148`):** the pilot also runs a cross-check against the
       SEC, with network allowed, beside the offline `verify_pilot.py` (built on the tracked `scripts/sec_xcheck/` that `T-147`
       delivers: `itemcheck.py`, `signcheck.py`, `precedence.py` with `--db`, and `audit_sec_checklist.py fetch` for the SEC cache). **FAIL** on any value mismatch, on any
       resolved income tax/equity/net income/short-term debt that differs from its intended SEC concept, or on
       any flipped sign. **WARN** on documented not-applicable cases.
+
+- [ ] **T-162** *(P0 — prerequisite of `T-100`; value change)* (k)(1) must test "restrict" on the
+      caption before stripping parentheses (strip only note references). Measured on pilot_a3: **890**
+      balance-sheet face rows with the combined tag; **21** have "restrict" only inside parentheses
+      (ERIE 11, AXP 10; check whether AXP's "Total cash and cash equivalents" caption is already
+      refused). **Acceptance** on a scratch copy of pilot_a3: the affected filings' cash is refused
+      with its flag; the metrics built on it are listed before and after; everything else is
+      identical; a `docs/model_fixes.md` entry. Evidence: DECISIONS row 62.
+
 - [ ] **T-100** *(takes over `T-068`'s former full-universe scope; also takes over `T-079`'s LLM re-run
       and supersedes `T-075`: it runs the LLM on every filing, from a fresh database, with the final
       prompts)* Run the whole
@@ -926,7 +1058,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       (2026-10-05, 2026-10-06)**: Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item
       20's `T-146` are deferred until after `T-100` and are not prerequisites; `T-075` and `T-079` are
       superseded by this task.
-      `T-083`, `T-142`, `T-144`, `T-152` and `T-145` (Work item 19), and the final pilot `T-143` are prerequisites; `T-100` keeps `T-153` as a prerequisite. A task added
+      `T-083`, `T-142`, `T-144`, `T-152` and `T-145` (Work item 19), the final pilot `T-143`, and its part A follow-ups `T-160` (done 2026-10-24), `T-161` (done 2026-10-24) and `T-162` are prerequisites; `T-100` keeps `T-153` as a prerequisite. A task added
       after this one is still a prerequisite of it, unless the user defers it the same way. `T-100`
       stays unchecked until every other box in this file is checked, or explicitly
       superseded/moved/deferred. **Acceptance**: `coverage` for
@@ -942,6 +1074,12 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       all 56 others extract fine on today's gateway. Expect GEHC FY2022 as a recorded failure, and count that error
       across the universe. (PSKY FY2025 is refused by ID-07 as recorded: its payload holds only the predecessor's 2024
       and 2023 full years, which fits a company formed by a 2025 merger -- not a gateway fault.)
+      **APO's FY2023 10-Q** (accession `0001858681-23-000017`, filed 2023-08-04) also fails at
+      `stage='period'` on **every** run: the gateway's payload has no quarter column of its own (it returns
+      only the FY2022-12-31 column). `T-017`'s classifier calls it **data**, not service, and it recurs —
+      measured on `T-153` part 3a's R2 copy, 2026-10-14, where the re-run cleared SBAC's and WBD's service
+      failures but not this one. The unit is recorded in `analysis_run_error` and counted as skipped, never
+      scored: expect it as a recorded, recurring data failure (not a gateway fault).
       **Must run on a fresh `financial.db` (PR #104 review, 2026-09-30):** `financial_facts`
       is append-only, `INSERT OR IGNORE` on `(filing_id, statement, concept, period_key,
       filing_version = accession_number)` — a re-run against a database already carrying a
@@ -959,12 +1097,106 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       reader (`T-132`) both read
       `financial_facts` directly and would otherwise silently keep reading synthesized
       values. The pilot is unaffected, since it already starts from a fresh database.
+      **Gateway empty payloads (T-161 r2, 2026-10-24):** NDSN's FY2024 10-K
+      (`0000072331-24-000177`) is served with **0 cash-flow rows** while pilot_a3 holds its data;
+      **0 of 10** random pilot_a3 10-Ks fetched the same day (spaced GETs) were empty, so it is a
+      per-filing gap, not gateway-wide. A T-100 run must treat an empty payload as a failure and
+      retry it, never as an empty filing.
+      **Metrics-only rate (T-161 r2, 2026-10-24):** measured **36–80 s/filing** on the current
+      gateway (INTU 19 filings 11 m 24 s; NDSN 11 filings 14 m 41 s) against P2b's 6.2 s/unit. On
+      one NDSN FY2025 10-K the gateway GET is **3.77 s** and parse + 221 facts + 38 metrics + gate
+      is **0.12 s** — the gateway, not the compute; re-base the T-100 budget.
+      **Delisting-return policy inputs (Shumway 1997; reviewer A, 2026-10-15).** How a position closed by
+      an index exit or a halt is valued is decided in this task; its inputs are recorded here. The
+      feasibility step's **exit-event table** — one row per unpriced line: the index-exit event, any later
+      delisting, the first OTC trade after it and the consideration — is in
+      `/workspaces/thesis/handoff/task_b_feasibility_report.md` §7, with every deal's terms **cited from
+      the company's own filings** (form, accession, verbatim quote). The **contingent rights** to value:
+      **WBA** $11.45 cash + a Divested Asset Proceeds Right of up to $3.00 (8-K 2025-07-11
+      `0001193125-25-158216`); **HOLX** $76.00 cash + a CVR of up to $3.00 (cash take-private,
+      Blackstone/TPG, 2026-04-07); **ABMD** $380.00 cash + a CVR of up to $35.00 (8-K 2022-11-01
+      `0001193125-22-274497`). **ANSS is the declared exception**: its last real trade (374.30, 2025-07-16)
+      is **5.01% below** the deal value ($197.00 cash + 0.3450 SNPS = 394.06) and it is kept **as traded**.
+      `T-153` part 3c's **exit list** (`docs/exit_list.json`) settles the lines: **31 exits**, 4 that
+      left the index and exited later (DISH, SEE, CMA, QRVO) and the failures **SIVB, SBNY and FRC**;
+      the valuation this step will apply is the note in `docs/model_fixes.md`'s T-153 part 3c entry
+      (C11 pp.5-7 and 34-35). How each counts is decided here, not in `T-153`.
+      **The private Tiingo lines (T-153 part 3d).** Every evaluation result is reported **twice, with
+      and without the Tiingo lines**, and the run record gives both: `kg_schema.queries.tiingo_asset_ids`
+      names them (the line's own `price_daily.source = 'tiingo'`), `pricing_agent import-tiingo` loads
+      them from `/workspaces/thesis/data/private/tiingo/` and records the lines, rows, dividends, splits
+      and the file's sha256 on its own `pricing_run`, and `verify_pilot`'s T-153f check asserts that no
+      filtered view returns one, that no line mixes vendors and that the record equals the database.
+      **A line the gateway forgets stops this task (reviewer A, 2026-10-15).** Before its fetch, re-run
+      the measurement of `docs/leaver_price_coverage_2019.json` (the script beside it,
+      `scripts/leaver_price_coverage_2019.py`) over every line `members_over_range` returns, current
+      members included. A line **less covered than that committed baseline** (ignoring days before the
+      stock first traded) **stops the run and goes to reviewer A** -- nothing switches to Tiingo
+      silently, and the decision at the stop is reviewer A's. The **first remedy** to bring there is the
+      gateway archive (part 3a's R4 copy): a forgotten line whose archived gateway rows cover its whole
+      span is **seeded from them, as gateway rows**, clipped to the line's last membership day; a line
+      the archive covers only in part is Tiingo whole, as WBD is. Both copies of the archive --
+      `/workspaces/thesis/data/archive/t153c_r4_gateway_2026-10-14/financial.db` and the user's Mac copy,
+      sha256 `6bddc77c3d69f428313af52ad99cf05c23a38cfcba6d1544c49e0dcf9383cd6a` -- are **kept until this
+      task is done, opened read-only only, and never modified**. Run `quant backfill-actions --from
+      2019-01-02` (its default starts at 2022-01-01) and complete
+      `src/kg_schema/data/corporate_action_events.csv` from that run's output **before** the cycle and
+      quant steps: an unexplained SPLIT row refuses the market cap (and the import). **The machine
+      (the user's decision, 2026-10-16):** the pilot (T-143) and this task run on the Windows + WSL2
+      machine, so the Tiingo file stays where it is, with no copy.
+      **Two measured stops before the cycle and quant steps (reviewer B, 2026-10-17; measured on
+      part 3d's archive copy).** (a) `quant backfill-actions --from 2019-01-02` left the database
+      with **106 SPLIT rows**, of which **36 were not in the tracked list** (34 assets,
+      2019-02-07..2024-06-25): **the 36 are now cited** in the 2019–2024 list (including DD
+      2019-06-03, the one `reverse_split_spinoff` row) and **`scripts/unexplained_split_rows.py` is
+      the gate** (verify_pilot's T-153g). **T-143 part A item 9 (PR #177)** then made
+      `quant backfill-actions` (and `quant pending`) select the **historical** universe
+      (`members_over_range`, as `pricing_agent`/`fundamental_agent` do), which adds **8 SPLIT rows**
+      for the leaver lines (7 newly cited, including MTCH 2020-07-01 under the new combined class
+      `split_spinoff`), so that archive copy now holds **114 SPLIT rows = 113 distinct
+      `(CIK, ex_date)` events** — **GOOG and GOOGL are one 2022-07-18 event with two class rows** —
+      of which **113 are explained by the 112 event rows** in
+      `src/kg_schema/data/corporate_action_events.csv` and **exactly one is not: `CTVA 2026-10-01`**
+      (6.665; the follow-up below). So those 34 assets' market caps no longer refuse (part 3d's
+      guard) and the cycle's VALORIZATION and quant's cap weights no longer treat them as missing.
+      Exactly one of the original 36 falls inside 2022+ and is absent from production: **ILMN
+      2024-06-25, 1.028** (its GRAIL spin-off). Complete the list from the run's output before the
+      cycle step, as the paragraph above says: **every row quotes the sentence that states the
+      completed event and its ratio**, from the same filing or one filing per event; the classes and
+      the values stay as the vendors recorded them.
+      **CTVA follow-up (reviewer A's ruling, 2026-10-18).** Cite **CTVA 2026-10-01** from Corteva's Q3 2026
+      10-Q, or the first filing that states the completion and the ratio together, **before T-100**;
+      no filing yet does (the 1-for-1 ratio is only in Vylor's information statement
+      `0001193125-26-396054` Ex. 99.1; the completion 8-K `0001755672-26-000028` has no ratio), so
+      every CTVA cap is refused meanwhile — the one row `scripts/unexplained_split_rows.py` reports.
+      **Vylor is the accounting successor** (completion 8-K, Item 9.01); Corteva's filings after the
+      spin present **New Corteva on a carve-out basis**, and T-100 handles the break in CTVA's
+      fundamentals. (b) `quant build-returns` builds only the members of the
+      universe **on its `date_to`** (`quant/db.py`'s `load_assets` reads `members_asof`): a leaver's
+      return rows exist only for a `date_to` inside its own membership, so building to a later date
+      gives it none. Part 3d's R3 (a run to 2024-06-21) left **16 of the 32** imported lines without
+      any `quant_return_daily` row (ABMD, ATVI, CERN, CTXS, DISCK, DISH, DRE, FRC, NLSN, PBCT, PXD,
+      SBNY, SEE, SIVB, TWTR, XLNX) -- the other 16 have them, stopping at that date. This is not
+      part 3d's bug, and the benchmark panel is the index's business, so this task must **not**
+      widen it: it is a stop to record and decide here (a per-line return series for the backtest
+      vs the index panel as today).
+      **The replay's first date is measured in this run, not declared (reviewer A, 2026-10-14).** After the
+      ingestion steps and before the replay, one read-only step computes -- from the **stored** pillar
+      statuses (`score_snapshot[FUNDAMENTAL].inputs_json`'s `pillars`/`coverage`, code only, no LLM) -- the
+      share of each cycle date's `members_asof(that date)` members that has no usable score, and takes the
+      first cycle date whose share is at or under `cycle`'s `unscored_max_share` (0.05) as the replay's
+      first date. `T-153` part 3a's R6 (i) curve (members with no filing public yet) is what to expect
+      before it; a share measured on a 2026 date is not, because it depends on the date.
+
+
+**Work item 22 (the daily backtest and GUARD, `T-163`) closed 2026-10-31** — its section was cut to `CHANGELOG.md`; one line only, as constitution AI behavior #13 requires.
 
 ## Status
 
 **🔴 Current priority order (user's, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first
-2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) → `T-153` (historical universe) → Work item 19 (`T-083` → `T-142` →
-`T-145`) → Work item 2 (orchestrator) → `T-143` (the final pilot) → `T-100` (the full-universe run, last of all).
+2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`)) → `T-153` (historical universe) → Work item 19 (`T-083` → `T-142` →
+`T-145`) → Work item 2 (orchestrator) → `T-143` part A (the final pilot) → **`T-160` (done 2026-10-24), `T-161` (done 2026-10-24) and `T-162`** (part A follow-ups) → `T-143` part B → `T-100` (the full-universe run, last of all).
+Work item 23 (`T-164`, the dev-container image test) is outside this chain (user, 2026-11-16).
 Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20 (`T-146`) are deferred until after
 `T-100`; Work item 3
 stays superseded by `T-077` (do not implement). `T-079` and `T-075` are superseded by `T-100`. One task per

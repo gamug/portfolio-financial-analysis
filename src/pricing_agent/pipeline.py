@@ -11,16 +11,21 @@ range, then derives the ``full`` window summary (and per-calendar-year summaries
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import date
 
-from portfolio_common.db import Database
+from portfolio_common.db import Database, Row
 from tqdm import tqdm
 
-from kg_schema import connect, rundate
+from kg_schema import connect, rundate, ticker_history
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
-from kg_schema.queries import UniverseMember, connect_ro, members_asof
+from kg_schema.queries import (
+    WINDOW_START,
+    WindowMember,
+    connect_ro,
+    members_over_range,
+)
 from kg_schema.trading_calendar import last_final_session, session_is_open_or_pending
 from pricing_agent import db
 from pricing_agent.config import Settings
@@ -35,7 +40,11 @@ from pricing_agent.observations import build_observations
 from pricing_agent.pricing_client import Candle, DailyPrices, PricingClient
 from pricing_agent.stats import WindowStats, slice_year, summarize
 
-DEFAULT_START_DATE = "2022-01-01"
+# T-153 part 3a (D2): one rule for every company -- prices from 2019-01-02, the backtest
+# window's first session (2022-01-03) minus quant's 756-day ``lookback_days`` (and the 200-day
+# moving average and the 252-day momentum are shorter). A line that left the index is fetched
+# only through its last membership day.
+DEFAULT_START_DATE = "2019-01-02"
 FULL_LABEL = "full"
 
 _Window = tuple[str, str, str, str]  # (ticker, start, end, label)
@@ -48,6 +57,16 @@ class SessionNotClosed(RuntimeError):
 
 class _SplitJumpRefused(RuntimeError):
     """A series with a split-shaped close jump this run could not explain (T-131)."""
+
+
+class _TiingoStitchRefused(RuntimeError):
+    """The gateway now serves a line that holds Tiingo rows (T-153 part 3d, rule 2 / A1).
+
+    Writing the fetched window over those rows would flip their ``source`` a date at a time -- a
+    stitched series from two vendors, which rule 2 forbids. The line is refused and recorded; the
+    operator takes D9's route (delete the private file and every copy, discard the database, rebuild
+    without the import, re-run) rather than deleting rows in place, because the import's rows also
+    reach the valuation metrics, the score blocks and the positions' cost bases."""
 
 
 @dataclass
@@ -68,11 +87,6 @@ class RunParams:
         """The fetch/no-lookahead upper bound: ``--end`` clamped to ``analysis_date``."""
         return min(self.end_date, self.analysis_date) if self.end_date else self.analysis_date
 
-    def years(self) -> list[int]:
-        if not self.by_year:
-            return []
-        return list(range(int(self.start_date[:4]), int(self.resolved_end()[:4]) + 1))
-
 
 @dataclass
 class RunReport:
@@ -90,6 +104,10 @@ class RunReport:
 class _Task:
     asset_id: int
     ticker: str
+    # T-153 part 3a: the line's own fetch window -- from DEFAULT_START_DATE to min(the run's
+    # end, the line's last membership day), so a leaver is fetched nothing after its exit.
+    start: str
+    end: str
 
 
 @dataclass
@@ -118,9 +136,27 @@ def run(settings: Settings, params: RunParams) -> RunReport:
             raise DirtyTree(
                 f"{dirty_reason}; pass --allow-dirty for a deliberate run from an uncommitted tree"
             )
-        members = _load_members(settings, params.analysis_date)
-        db.sync_universe(conn, members)
-        symbols = [m.symbol for m in members]
+        window = _load_window(settings, conn, params.analysis_date)
+        members = [w.member for w in window]
+        sync = db.sync_universe(conn, members)
+        _report_adoptions(sync)
+        # T-153 part 2: fetch under the line's canonical (current) ticker -- the gateway serves
+        # the whole history, the pre-rename days included, under it; the old symbol returns nothing.
+        symbols = [
+            ticker_history.canonical_for_member(conn, symbol=m.symbol, cik=m.cik) for m in members
+        ]
+        if params.tickers:
+            # F3: --tickers takes the symbol of the run's date (FB on a 2022 date -> META).
+            params = replace(
+                params,
+                tickers=ticker_history.canonical_tickers(
+                    conn,
+                    params.tickers,
+                    member_ciks={m.symbol.upper(): m.cik for m in members},
+                    as_of=params.analysis_date,
+                ),
+            )
+        exits = {w.member.symbol.upper(): w.window_to for w in window}
         with PricingClient(settings.pricing_base_url) as client:
             assets = db.load_universe(
                 conn, tickers=params.tickers, symbols=symbols, limit=params.limit
@@ -129,7 +165,7 @@ def run(settings: Settings, params: RunParams) -> RunReport:
                 raise RuntimeError(
                     f"no S&P 500 members as of {params.analysis_date} resolved to an asset row"
                 )
-            tasks = [_Task(int(a["id"]), str(a["ticker"])) for a in assets]
+            tasks = [_task(params, a, exits) for a in assets]
             completed: set[_Window] = set() if params.fresh else db.completed_windows(conn)
 
             run_id = db.start_run(
@@ -173,29 +209,60 @@ def _require_closed_session(end: str) -> None:
         )
 
 
-def _load_members(settings: Settings, analysis_date: str) -> list[UniverseMember]:
-    """The S&P 500 constituents as of *analysis_date*, from ``universe.db``."""
+def _load_window(settings: Settings, conn: Database, analysis_date: str) -> list[WindowMember]:
+    """Every company that was a member at any time in ``[WINDOW_START, analysis_date]``.
+
+    One entry per CIK line (T-153 part 3a): the run fetches what every company that was a
+    member in the backtest window needs, leavers included, and the line's ``window_to`` bounds
+    its fetch. ``universe.db`` is membership only; the line comes from the ticker history."""
     uconn = connect_ro(settings.universe_db_path)
     try:
-        members = members_asof(uconn, analysis_date)
+        window = members_over_range(uconn, conn, WINDOW_START, analysis_date)
     finally:
         uconn.close()
-    if not members:
+    if not window:
         raise RuntimeError(
-            f"universe.db ({settings.universe_db_path}) has no members as of {analysis_date}"
+            f"universe.db ({settings.universe_db_path}) has no members in "
+            f"[{WINDOW_START}, {analysis_date}]"
         )
-    tqdm.write(f"universe: {len(members)} S&P 500 members as of {analysis_date}")
-    return members
+    tqdm.write(f"universe: {len(window)} S&P 500 lines in [{WINDOW_START}, {analysis_date}]")
+    return window
 
 
-def _expected_labels(params: RunParams) -> set[str]:
-    return {FULL_LABEL, *(str(year) for year in params.years())}
+def _task(params: RunParams, asset: Row, exits: Mapping[str, str | None]) -> _Task:
+    """The fetch window of one asset: from D2's start to min(the run's end, the line's exit)."""
+    ticker = str(asset["ticker"])
+    end = params.resolved_end()
+    exit_date = exits.get(ticker.upper())
+    if exit_date is not None:
+        end = min(end, exit_date)
+    return _Task(int(asset["id"]), ticker, params.start_date, end)
+
+
+def _window_years(start: str, end: str, params: RunParams) -> list[int]:
+    """The per-calendar-year labels a task's own window spans (``--by-year``)."""
+    if not params.by_year:
+        return []
+    return list(range(int(start[:4]), int(end[:4]) + 1))
+
+
+def _report_adoptions(sync: ticker_history.SyncResult) -> None:
+    """Print every recorded rename adopted in place (T-153 part 2, C4)."""
+    for adoption in sync.adoptions:
+        tqdm.write(
+            f"universe: adopted {adoption.old_ticker} -> {adoption.new_ticker} "
+            f"(asset {adoption.asset_id}, CIK {adoption.cik})"
+        )
+
+
+def _expected_labels(task: _Task, params: RunParams) -> set[str]:
+    return {FULL_LABEL, *(str(year) for year in _window_years(task.start, task.end, params))}
 
 
 def _run_task(engine: _Engine, task: _Task) -> None:
     params, report, conn = engine.params, engine.report, engine.conn
-    start, end = params.start_date, params.resolved_end()
-    wanted = _expected_labels(params)
+    start, end = task.start, task.end
+    wanted = _expected_labels(task, params)
     have = {label for label in wanted if (task.ticker, start, end, label) in engine.completed}
     if not params.fresh and wanted <= have and not params.store_daily and not params.observations:
         report.skipped += 1
@@ -212,6 +279,11 @@ def _run_task(engine: _Engine, task: _Task) -> None:
         return
 
     if prices.is_empty:
+        # T-153 part 3d (D3): a line the gateway cannot serve may still hold bars -- the private
+        # import's. `--observations` derives analytics over whatever is stored, so its rows are
+        # written from exactly the normal path (the same function, the same engine version).
+        if params.observations:
+            _derive_observations(engine, task)
         report.skipped += 1
         db.bump_run_counter(conn, report.run_id, "skipped_units")
         db.record_error(
@@ -223,6 +295,12 @@ def _run_task(engine: _Engine, task: _Task) -> None:
 
     try:
         _store(engine, task, prices)
+    except _TiingoStitchRefused as exc:  # nothing was written for this ticker (A1)
+        report.failed += 1
+        report.errors.append(f"{task.ticker}: {exc}")
+        db.bump_run_counter(conn, report.run_id, "failed_units")
+        db.record_error(conn, report.run_id, RunError(task.ticker, None, "tiingo_stitch", str(exc)))
+        return
     except _SplitJumpRefused as exc:  # nothing was written for this ticker
         report.failed += 1
         report.errors.append(f"{task.ticker}: {exc}")
@@ -235,11 +313,22 @@ def _run_task(engine: _Engine, task: _Task) -> None:
 
 def _store(engine: _Engine, task: _Task, prices: DailyPrices) -> None:
     params, conn = engine.params, engine.conn
-    start, end = params.start_date, params.resolved_end()
+    start, end = task.start, task.end
     run_id = engine.report.run_id
 
     # No lookahead: drop any candle dated after the analysis date.
     candles = [c for c in prices.candles if c.date <= end]
+    # Rule 2 (T-153 part 3d, A1): one vendor per line, never stitched. The gateway now serving a
+    # line the import priced would overwrite its rows' ``source`` date by date. Refuse the
+    # ticker, write nothing for it, and record it -- the T-131 refusal's pattern, with no
+    # ``--allow-*`` override.
+    if candles and db.has_tiingo_candles(conn, task.asset_id):
+        raise _TiingoStitchRefused(
+            f"{task.ticker} holds imported rows (source='tiingo') and the gateway now serves it: "
+            "storing this window would stitch two vendors into one series. T-153 part 3d's D9 "
+            "applies: delete the private file and its copies, discard the database, rebuild "
+            "without the import and re-run"
+        )
     # What reaches price_daily: the fetched window, or the full history if it had to be re-fetched.
     # Decided before any write, so a refused series leaves the ticker untouched.
     to_store = _reconcile_history(engine, task, candles) if params.store_daily else candles
@@ -248,7 +337,7 @@ def _store(engine: _Engine, task: _Task, prices: DailyPrices) -> None:
     full = summarize(candles)
     if full is not None:
         windows.append((FULL_LABEL, full))
-    for year in params.years():
+    for year in _window_years(start, end, params):
         year_stats = summarize(slice_year(candles, year))
         if year_stats is not None:
             windows.append((str(year), year_stats))
@@ -270,15 +359,25 @@ def _store(engine: _Engine, task: _Task, prices: DailyPrices) -> None:
     if params.store_daily:
         db.replace_daily_prices(conn, task.asset_id, to_store, run_id=run_id)
     if params.observations:
-        # From the asset's whole stored history, not this run's window: a 252-day momentum needs
-        # 252 earlier bars, and a refresh over a few weeks left those fields NULL (T-131).
-        history = db.load_daily_candles(conn, task.asset_id, end=end)
-        db.upsert_price_observations(
-            conn,
-            task.asset_id,
-            build_observations(history, engine_version=db.PRICE_OBSERVATION_ENGINE_VERSION),
-            run_id=run_id,
-        )
+        _derive_observations(engine, task, end=end)
+
+
+def _derive_observations(engine: _Engine, task: _Task, *, end: str | None = None) -> int:
+    """Derive the asset's `price_observation` series from its *whole stored* history (T-131).
+
+    The one path observations are written by: a member with bars writes them whether the bars
+    arrived from the gateway's fetch or from the private import (T-153 part 3d, D3)."""
+    conn = engine.conn
+    last = end or task.end
+    history = db.load_daily_candles(conn, task.asset_id, end=last)
+    if not history:
+        return 0
+    return db.upsert_price_observations(
+        conn,
+        task.asset_id,
+        build_observations(history, engine_version=db.PRICE_OBSERVATION_ENGINE_VERSION),
+        run_id=engine.report.run_id,
+    )
 
 
 def _reconcile_history(engine: _Engine, task: _Task, fetched: list[Candle]) -> list[Candle]:
@@ -295,7 +394,7 @@ def _reconcile_history(engine: _Engine, task: _Task, fetched: list[Candle]) -> l
     split-shaped jump that is still there afterwards -- or that no recorded split explains -- is
     refused rather than stored, unless ``allow_split_jumps`` accepts it as a real move."""
     params, conn = engine.params, engine.conn
-    end = params.resolved_end()
+    end = task.end
     stored = db.load_daily_candles(conn, task.asset_id, end=end)
     splits = db.recorded_split_values(conn, task.asset_id, end=end)
 
@@ -336,9 +435,8 @@ def _refetch_full(
 ) -> list[Candle]:
     """Re-fetch the asset's whole history (from its first stored bar, or ``--start`` if earlier),
     so a split adjusts every bar at once. Returns *fetched* unchanged if the gateway has nothing."""
-    params = engine.params
-    end = params.resolved_end()
-    start = min(stored[0].date, params.start_date) if stored else params.start_date
+    end = task.end
+    start = min(stored[0].date, task.start) if stored else task.start
     full = engine.client.daily_any_spelling(task.ticker, start, end)
     engine.report.full_refetches.append(task.ticker)
     rewritten = [c for c in full.candles if c.date <= end]

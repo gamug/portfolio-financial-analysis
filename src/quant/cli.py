@@ -7,6 +7,7 @@ notice and exits 0.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -18,7 +19,12 @@ from kg_schema.queries import StaleAsOf, VetoSchemaStale
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
 from kg_schema.versions import VersionError
-from quant.actions import DividendsNotReady, GatewayUnavailable, backfill_corporate_actions
+from quant.actions import (
+    DEFAULT_FROM,
+    DividendsNotReady,
+    GatewayUnavailable,
+    backfill_corporate_actions,
+)
 from quant.benchmark import (
     INTERNAL_EW,
     BenchmarkCsvError,
@@ -29,6 +35,7 @@ from quant.config import QuantSettings
 from quant.db import ActionsReport, ensure_schema
 from quant.evaluate import run_evaluate
 from quant.factors import FactorIntegrityError
+from quant.pending import pending_line
 from quant.persist import (
     DryRunPlan,
     MissingMarketCaps,
@@ -37,9 +44,14 @@ from quant.persist import (
     plan_optimize,
     run_build_risk_model,
     run_optimize,
+    run_optimize_topn,
 )
 from quant.profiles import load_profile
-from quant.rates import RiskFreeUnavailable
+from quant.rates import (
+    FF_RF_ENGINE_VERSION,
+    RiskFreeUnavailable,
+    load_french_rf,
+)
 from quant.repair import NotALiveBookSnapshot, PortfolioNotFound, apply_void, plan_void
 from quant.returns import run_build_returns
 from quant.turnover import check_turnover_cap
@@ -81,6 +93,13 @@ _ALLOW_MISSING_CAPS_HELP = (
     "build the risk model even though some panel assets have no market cap as of the date "
     "(T-132): they are weighted 0 in the equilibrium market portfolio and the run's params_json "
     "names them -- by default the build refuses instead of dropping them silently"
+)
+_INCLUDE_HARD_VETOED_HELP = (
+    "widen the universe to the names under a T-1 HARD veto (exclude_hard_vetoed = False, the "
+    "backtest's MARKOWITZ_BASE / Top-30 arms): the risk model then covers the whole gated "
+    "universe, not the book's own filtered picture of it. The choice is recorded on the run's "
+    "params_json and manifest, and it changes the manifest tag, so a model built with it never "
+    "reuses or overwrites one built without it"
 )
 _ALLOW_DIRTY_HELP = (
     "override the clean-tree guard (T-114) and write this run's code_version even though the "
@@ -183,6 +202,7 @@ def _add_build_risk_model_parser(sub: argparse._SubParsersAction[argparse.Argume
     rm.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
     rm.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
     rm.add_argument("--allow-missing-caps", action="store_true", help=_ALLOW_MISSING_CAPS_HELP)
+    rm.add_argument("--include-hard-vetoed", action="store_true", help=_INCLUDE_HARD_VETOED_HELP)
     rm.add_argument(
         "--market-cap-max-share-age-days",
         dest="market_cap_max_share_age_days",
@@ -214,12 +234,62 @@ def _add_optimize_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser
     )
     op.add_argument("--solver")
     op.add_argument("--model-version", dest="model_version")
+    op.add_argument(
+        "--cycle-run-id",
+        dest="cycle_run_id",
+        type=int,
+        help="size the Top-30 book on the cycle_ranking.selected = 1 rows of this cycle run "
+        "(needs --risk-model-id; BACKTEST_SPEC §8.2)",
+    )
+    op.add_argument(
+        "--pool-all",
+        dest="pool_all",
+        action="store_true",
+        help="Phase 1 section 1.5: size the book on every asset in the risk model's panel "
+        "(MARKOWITZ_CORE_FILTER), with the same caps and second pass; needs --risk-model-id "
+        "and no --cycle-run-id",
+    )
+    op.add_argument(
+        "--risk-model-id",
+        dest="risk_model_id",
+        type=int,
+        help="the stored quant_risk_model to read (with --cycle-run-id: its panel must cover the "
+        "pool's names, and its stored covariance -- never a re-estimation -- is the input)",
+    )
+    op.add_argument(
+        "--pool-m",
+        dest="pool_size",
+        type=int,
+        choices=(30, 60, 100),
+        default=30,
+        help="V3 plan section 2a: the cycle's selected pool the min-variance reads (default 30); "
+        "if the solution holds more than 30 names, the 30 largest are re-solved. The name cap "
+        "stays 1.5 / --top-n (30)",
+    )
+    op.add_argument(
+        "--satellite-weighting",
+        dest="satellite_weighting",
+        choices=("minvar", "rp", "ew", "vt", "maxdiv", "hrp", "mincvar", "ensemble"),
+        default="minvar",
+        help="V4 plan section 2b / final round section 3: the satellite weighting on the "
+        "names minvar holds (default minvar); Phase 1 section 1.2: the min-CVaR member reads "
+        "simple returns unless --cvar-scenarios log",
+    )
+    op.add_argument(
+        "--cvar-scenarios",
+        dest="cvar_scenarios",
+        choices=("simple", "log"),
+        default=None,
+        help="Phase 1 section 1.2: units of the min-CVaR scenario matrix (default: the "
+        "setting's simple; log exists only for the correction ladder)",
+    )
     op.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     op.add_argument("--returns-version", dest="returns_version", help=_RETURNS_VERSION_HELP)
     op.add_argument("--risk-model-version", dest="risk_model_select", help=_RISK_MODEL_VERSION_HELP)
     op.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
     op.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
     op.add_argument("--allow-missing-caps", action="store_true", help=_ALLOW_MISSING_CAPS_HELP)
+    op.add_argument("--include-hard-vetoed", action="store_true", help=_INCLUDE_HARD_VETOED_HELP)
     op.add_argument(
         "--market-cap-max-share-age-days",
         dest="market_cap_max_share_age_days",
@@ -238,19 +308,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     ba = sub.add_parser("backfill-actions", help="fetch dividends/splits into corporate_action")
     _add_common(ba)
-    ba.add_argument("--from", dest="date_from", default="2022-01-01", help=_TODAY_HELP)
+    ba.add_argument("--from", dest="date_from", default=DEFAULT_FROM, help=_TODAY_HELP)
     ba.add_argument("--to", dest="date_to", help=_AS_OF_HELP)
     ba.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
 
     br = sub.add_parser("build-returns", help="derive the total-return daily series")
     _add_common(br)
-    br.add_argument("--from", dest="date_from", default="2022-01-01", help=_TODAY_HELP)
+    br.add_argument("--from", dest="date_from", default=DEFAULT_FROM, help=_TODAY_HELP)
     br.add_argument("--to", dest="date_to", help=_AS_OF_HELP)
     br.add_argument(
         "--allow-no-dividends",
         action="store_true",
         help="build even though no clean gateway backfill-actions covers the window: the "
         "series is price-only and locks in under the return engine version (T-086)",
+    )
+    br.add_argument(
+        "--pit-members",
+        action="store_true",
+        help="select every asset whose point-in-time membership stint intersects the window "
+        "(leavers included); default: members as of --to",
     )
     br.add_argument("--corpact-version", dest="corpact_version", help=_CORPACT_VERSION_HELP)
     br.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
@@ -282,6 +358,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lb.add_argument("--benchmark", required=True, help="series name, e.g. SPY_TR")
 
+    rf = sub.add_parser(
+        "load-rf",
+        help="load French's daily RF into risk_free_rate (curve FF_RF_DAILY, engine rf-v2)",
+    )
+    rf.add_argument("--db", help="override KG_FINANCIAL_DB path")
+
     ev = sub.add_parser("evaluate", help="forward realized returns: each book vs the live book")
     _add_common(ev)
     ev.add_argument(
@@ -296,6 +378,13 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"{INTERNAL_EW} (rebuilt over the gated panel) or a series loaded with load-benchmark",
     )
     ev.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
+
+    pd = sub.add_parser(
+        "pending",
+        help="read-only: is the quant chain behind its inputs (returns, books, evaluate, "
+        "gateway corporate actions)? One line (T-017)",
+    )
+    _add_common(pd)
 
     vs = sub.add_parser(
         "versions", help="list the stored versions of every input quant can be constrained on"
@@ -334,6 +423,7 @@ _FLAG_TO_FIELD: dict[str, tuple[str, object]] = {
     "max_sector_weight": ("max_sector_weight", float),
     "turnover_cap": ("turnover_cap", float),
     "solver": ("solver", str),
+    "cvar_scenarios": ("cvar_scenarios", str),
     "market_cap_max_share_age_days": ("market_cap_max_share_age_days", int),
 }
 
@@ -362,6 +452,8 @@ def _settings(args: argparse.Namespace) -> QuantSettings:
         updates["allow_dirty"] = True
     if getattr(args, "allow_missing_caps", False):
         updates["allow_missing_caps"] = True
+    if getattr(args, "include_hard_vetoed", False):
+        updates["exclude_hard_vetoed"] = False
     return s.model_copy(update=updates) if updates else s
 
 
@@ -390,6 +482,13 @@ def _print_plan(plan: DryRunPlan) -> None:
     print(f"  risk model: {plan.model_version} ({state})")
     if plan.book_version:
         print(f"  books: engine_version {plan.book_version}")
+
+
+def _print_final_json(payload: dict[str, object]) -> None:
+    """The machine-readable last stdout line every writing command ends with (BACKTEST_SPEC
+    §8.2): the ids a caller needs to read the rows back, one JSON object, never anything after
+    it on stdout (warnings go to stderr)."""
+    print(json.dumps(payload, sort_keys=True))
 
 
 def _dry_run(settings: QuantSettings, command: str, as_of: str) -> int:
@@ -426,6 +525,7 @@ def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: boo
         MissingMarketCaps,
         FactorIntegrityError,
         RiskFreeUnavailable,
+        ValueError,
     ) as exc:
         print(f"build-risk-model: {exc}", file=sys.stderr)
         return 1
@@ -468,10 +568,83 @@ def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: boo
                 f"market portfolio: {', '.join(cov['missing'])}",
                 file=sys.stderr,
             )
+    _print_final_json({"model_id": res.model_id})
     return 0
 
 
-def _run_optimize(settings: QuantSettings, as_of: str) -> int:
+def _run_optimize(  # noqa: PLR0913, PLR0911 - the run inputs, all named
+    settings: QuantSettings,
+    as_of: str,
+    *,
+    cycle_run_id: int | None = None,
+    risk_model_id: int | None = None,
+    pool_size: int = 30,
+    satellite_weighting: str = "minvar",
+    cvar_scenarios: str = "simple",
+    pool_all: bool = False,
+) -> int:
+    if pool_all and risk_model_id is None:
+        print("optimize: --pool-all needs --risk-model-id", file=sys.stderr)
+        return 1
+    if pool_all and cycle_run_id is not None:
+        print("optimize: --pool-all and --cycle-run-id are mutually exclusive", file=sys.stderr)
+        return 1
+    if not pool_all and (cycle_run_id is None) != (risk_model_id is None):
+        print(
+            "optimize: --cycle-run-id and --risk-model-id must be given together",
+            file=sys.stderr,
+        )
+        return 1
+    if risk_model_id is not None:
+        try:
+            top = run_optimize_topn(
+                settings,
+                as_of=as_of,
+                cycle_run_id=cycle_run_id,
+                risk_model_id=risk_model_id,
+                pool_size=pool_size,
+                satellite_weighting=satellite_weighting,
+                cvar_scenarios=cvar_scenarios,
+                universe_pool=pool_all,
+            )
+        except (
+            VersionError,
+            StaleAsOf,
+            DirtyTree,
+            VetoSchemaStale,
+            MissingMarketCaps,
+            FactorIntegrityError,
+            RiskFreeUnavailable,
+            ValueError,
+        ) as exc:
+            print(f"optimize: {exc}", file=sys.stderr)
+            return 1
+        source = (
+            f"from cycle run {top.cycle_run_id}"
+            if top.cycle_run_id is not None
+            else "from the whole PIT panel"
+        )
+        print(
+            f"optimize @ {top.as_of} (model {top.model_id}): {top.kind} #{top.portfolio_id} "
+            f"{source}, {top.n_positions} positions, status {top.status}"
+        )
+        payload = {
+            "portfolio_id": top.portfolio_id,
+            "model_id": top.model_id,
+            "kind": top.kind,
+            "pool_size": top.pool_size,
+            "first_pass_n": top.first_pass_n,
+            "second_pass": top.second_pass,
+            "final_n": top.n_positions,
+            "satellite_weighting": top.satellite_weighting,
+            "rp_names": top.rp_names,
+            "rp_max_weight": top.rp_max_weight,
+            "rp_max_min_rrc": top.rp_max_min_rrc,
+        }
+        if top.weighting is not None:
+            payload["weighting"] = top.weighting
+        _print_final_json(payload)
+        return 0
     try:
         opt = run_optimize(settings, as_of=as_of)
     except (
@@ -503,6 +676,7 @@ def _run_optimize(settings: QuantSettings, as_of: str) -> int:
             f"  WARNING: --allow-dirty overrode the clean-tree guard ({opt.dirty_tree_bypassed})",
             file=sys.stderr,
         )
+    _print_final_json({"model_id": opt.model_id, "portfolio_ids": dict(opt.books)})
     return 0
 
 
@@ -516,6 +690,18 @@ def _print_actions_report(report: ActionsReport) -> None:
         print(
             f"  {len(report.errors)} asset(s) got no data from the gateway and have no rows "
             f"written; first: {report.errors[0]}",
+            file=sys.stderr,
+        )
+    if report.unmatched:
+        shown = ", ".join(f"{ticker} ({reason})" for ticker, reason in report.unmatched)
+        print(
+            f"  {len(report.unmatched)} line(s) unmatched in the historical universe and not "
+            f"fetched: {shown}",
+            file=sys.stderr,
+        )
+    if report.empty_span:
+        print(
+            f"  {len(report.empty_span)} line(s) have no bar on or after --from and were skipped",
             file=sys.stderr,
         )
     if report.dirty_tree_bypassed is not None:
@@ -546,6 +732,7 @@ def _run_build_returns(settings: QuantSettings, args: argparse.Namespace, date_t
             date_from=args.date_from,
             date_to=date_to,
             allow_no_dividends=args.allow_no_dividends,
+            pit_members=getattr(args, "pit_members", False),
         )
     except (VersionError, DirtyTree) as exc:
         print(f"build-returns: {exc}", file=sys.stderr)
@@ -582,6 +769,14 @@ def _run_build_returns(settings: QuantSettings, args: argparse.Namespace, date_t
             f"  WARNING: --allow-dirty overrode the clean-tree guard ({rep.dirty_tree_bypassed})",
             file=sys.stderr,
         )
+    _print_final_json(
+        {
+            "engine_version": rep.engine_version,
+            "n_rows": rep.rows_written,
+            "date_from": args.date_from,
+            "date_to": date_to,
+        }
+    )
     return 0
 
 
@@ -652,6 +847,25 @@ def _run_load_benchmark(settings: QuantSettings, args: argparse.Namespace) -> in
     return 0
 
 
+def _run_load_rf(settings: QuantSettings) -> int:
+    conn = connect(settings.db_path)
+    try:
+        ensure_schema(conn)
+        try:
+            rep = load_french_rf(conn)
+        except RuntimeError as exc:
+            print(f"load-rf: {exc}", file=sys.stderr)
+            return 1
+    finally:
+        conn.close()
+    print(
+        f"load-rf [{rep.curve}, {FF_RF_ENGINE_VERSION}]: {rep.n_rows} sessions "
+        f"{rep.first_date}..{rep.last_date}, {rep.n_written} inserted/changed "
+        f"(French library {rep.library_version})"
+    )
+    return 0
+
+
 def _run_void_portfolio(settings: QuantSettings, args: argparse.Namespace) -> int:
     conn = connect(settings.db_path)
     try:
@@ -700,7 +914,7 @@ def _prepare(
     return settings, analysis_date
 
 
-def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branch per subcommand
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0911 - one branch per subcommand
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -712,6 +926,10 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branc
         return prepared
     settings, analysis_date = prepared
 
+    if args.command == "pending":
+        print(pending_line(settings, analysis_date))
+        return 0
+
     if args.command == "backfill-actions":
         return _run_backfill_actions(settings, args, _date_to(analysis_date, args))
 
@@ -722,13 +940,25 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branc
         return _run_build_risk_model(settings, analysis_date, store_cov=args.store_cov)
 
     if args.command == "optimize":
-        return _run_optimize(settings, analysis_date)
+        return _run_optimize(
+            settings,
+            analysis_date,
+            cycle_run_id=args.cycle_run_id,
+            risk_model_id=args.risk_model_id,
+            pool_size=args.pool_size,
+            satellite_weighting=args.satellite_weighting,
+            cvar_scenarios=args.cvar_scenarios or settings.cvar_scenarios,
+            pool_all=args.pool_all,
+        )
 
     if args.command == "benchmark":
         return _run_benchmark(settings, args, _date_to(analysis_date, args))
 
     if args.command == "load-benchmark":
         return _run_load_benchmark(settings, args)
+
+    if args.command == "load-rf":
+        return _run_load_rf(settings)
 
     if args.command == "evaluate":
         return _run_evaluate(settings, args, _date_to(analysis_date, args))

@@ -7,7 +7,9 @@ their private tables.
 
 ``ensure(db)``                 additive only -- new tables, new nullable columns,
                                  refreshed views. Safe to run anytime, concurrently
-                                 with the other repos. Never advances schema_version.
+                                 with the other repos. Records the migration floor only when
+                                 the database is already at the current shape and has none
+                                 (T-154), so ``migrate`` never replays a rebuild there.
 ``ensure(db, run_migrations=True)``  additionally runs the non-additive rebuilds in
                                  :mod:`kg_schema.migrations`. Only ``python -m <agent>
                                  migrate`` passes this.
@@ -31,10 +33,12 @@ from __future__ import annotations
 from portfolio_common.db import Database
 
 from . import availability as _availability
+from . import cover_audit as _cover_audit
 from . import identity as _identity
 from . import queries as _queries
+from . import ticker_history as _ticker_history
 from .db import connect, connect_ro
-from .ddl import ADDITIVE_DDL, REQUIRED_COLUMNS
+from .ddl import ADDITIVE_DDL, BACKTEST_DDL, REQUIRED_COLUMNS
 from .env import (
     DB_ENV_VAR,
     LEGACY_DB_ENV_VAR,
@@ -42,7 +46,7 @@ from .env import (
     database_path,
     universe_database_path,
 )
-from .migrations import apply_migrations
+from .migrations import apply_migrations, stamp_current_shape
 from .provenance import code_version
 from .views import ensure_views
 
@@ -96,15 +100,23 @@ def _ensure_veto_indexes(db: Database) -> None:
 
 
 def ensure(db: Database, *, run_migrations: bool = False) -> list[int]:
-    """Bring *db*'s database up to the shared schema. Returns applied migration ids."""
+    """Bring *db*'s database up to the shared schema. Returns applied migration ids.
+
+    A database that is already at the current shape and has no migration floor records every
+    version here (T-154, :func:`kg_schema.migrations.stamp_current_shape`), so ``migrate`` on a
+    database that was born at the current shape applies nothing."""
     _queries.ensure(db)
     db.create_schema(ADDITIVE_DDL)
+    db.create_schema(BACKTEST_DDL)  # m018's tables; a no-op once they exist
     db.commit()
     _add_missing_columns(db)
     _ensure_veto_indexes(db)
     _availability.ensure_triggers(db)
     _identity.ensure_triggers(db)
+    _ticker_history.ensure_seeded(db)  # T-153 part 2: the as-of ticker history (L-11)
+    _cover_audit.ensure_seeded(db)  # the cover-count audit layer (L-43, F-A12, D-20)
     ensure_views(db)
+    stamp_current_shape(db)  # T-154 (D2): a database born at the current shape records its version
     if run_migrations:
         applied = apply_migrations(db)
         _ensure_veto_indexes(db)  # m009 already creates these; idempotent/defensive here too

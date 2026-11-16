@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
+from kg_schema.pillar_score import DEFAULT_PILLAR_WEIGHTS
 
 # T-141: equal weights over the three components on a common 50 + 10z scale (the 1/N argument).
 # SEMANTIC stays out until Work item 4 writes it; `_blended` renormalizes over whatever is present.
@@ -81,11 +82,25 @@ class CycleSettings(BaseModel):
     # write into). Meant for a deliberate historical re-run, not routine use; a REPLAY run
     # instead resets the way past via `cycle backfill --force`.
     allow_backdated_veto: bool = False
+    # T-073 (D4): the weights over the FUNDAMENTAL pillar ratings, equal by default. A row stores
+    # the weights it was scored under; when these differ from a row's, `normalize` recomputes that
+    # row's total from the pillar ratings it stored -- no LLM call and no rewrite of the row. A row
+    # written before T-073 carries no pillar block and keeps its own `raw_value`.
+    fundamental_pillar_weights: dict[str, float] = Field(
+        default_factory=lambda: dict(DEFAULT_PILLAR_WEIGHTS)
+    )
     # T-119 (PR #78 review): a universe member with no FUNDAMENTAL score at all (not merely a
     # stale one) is ineligible for selection the same cycle it is detected, not through the T-1
     # veto lag -- but rank refuses outright, rather than silently building a portfolio blind on
     # most of the universe, once more than this share has no score at all.
     unscored_max_share: float = 0.05
+    # A-2 (CHAMPION, preregistration §3): the blend and the defensive tilt the ranking applies.
+    # `T0` is the baseline no-op; `market_returns` / `price_returns` are the causal series the
+    # driver loads once for the run (session -> market return, session -> asset -> return).
+    defensive_tilt: str = "T0"
+    returns_engine_version: str = "qret-v2"
+    market_returns: dict[str, float] | None = None
+    price_returns: dict[str, dict[int, float]] | None = None
 
     @property
     def has_preferences(self) -> bool:
@@ -108,6 +123,7 @@ class CycleSettings(BaseModel):
             "exclude": norm(self.exclude),
             "exclude_sectors": norm(self.exclude_sectors),
             "only_sectors": None if self.only_sectors is None else norm(self.only_sectors),
+            "defensive_tilt": self.defensive_tilt,
         }
 
     @classmethod

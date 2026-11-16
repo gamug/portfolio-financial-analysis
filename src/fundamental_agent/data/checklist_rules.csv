@@ -1,0 +1,134 @@
+id,layer,rule
+ID-01,ID,"A resolved line item comes from a standard-taxonomy concept (us-gaap, dei). A company-extension concept is used only through a documented fallback, and the value is flagged."
+ID-02a,ID,"When several concepts could represent an item, the concept with the narrowest matching definition wins: StockholdersEquity before StockholdersEquityBeforeTreasuryStock. A label or standardized-concept match never outranks an exact-concept match."
+ID-02b,ID,"A component is never used as the total. If the total is not filed, the item is left empty, unless a component map exists for it and a source states that identity (a DQC_0004 identity, or the B6 definitions). Each map in the code cites its source; a map without one is not used. ""Total ≥ component"" is tested only for the element pairs DQC_0009 lists. Sourced maps (v1.3): income tax = current + deferred (B6's definition of IncomeTaxExpenseBenefit), used only when both are on the statement face and the total is not; revenue = the ASC 606 and non-606 streams, only when they are the only revenue lines of the statement's revenue section (B4, CON-11); short-term debt per MET-07. A map with one term not filed: for debt only, the filed terms are used and flagged ""partial map"" when long-term debt is present and the rest of the balance sheet resolved (S-X 5-02: line items appear ""if applicable""); short-term debt alone leaves debt empty; cash never qualifies (a missing cash is a capture failure, so EV is empty). No debt line at all (review 3.1): debt = 0, flagged ""no debt lines"", only when the balance sheet resolved completely, no debt concept is filed, and no interest-expense concept is filed (including the variants the code does not read today, such as InterestExpenseDebt); otherwise debt is empty and flagged as a capture failure (N23)."
+ID-03,ID,"Parent-level earnings use NetIncomeLoss (attributable to the parent). ProfitLoss (including NCI) is used for parent earnings only when NCI income is absent or zero (CON-19 then makes them equal); otherwise parent earnings are ProfitLoss − NetIncomeLossAttributableToNoncontrollingInterest, or left empty."
+ID-04,ID,"The unit of every value matches its concept type: USD for monetary items, shares for share counts, USD per share for per-share items."
+ID-05,ID,Balance-sheet items come from instant facts at the period end; flows come from duration facts.
+ID-06,ID,A 10-Q quarter value comes from a ~3-month duration fact (qtrs = 1). Year-to-date facts are used only inside the TTM identity (PER-06).
+ID-07,ID,"The period end a filing is keyed on equals its dei:DocumentPeriodEndDate, which in turn matches the EDGAR header periodOfReport, within PER-08's tolerance."
+ID-08,ID,Fiscal period labels are derived from the period end and the fiscal year end. DocumentFiscalYearFocus and DocumentFiscalPeriodFocus are only a cross-check.
+ID-09,ID,"Consolidated values come from facts with no explicit dimension member. Members of ConsolidationItemsAxis are components, eliminations or reconciling items, never the consolidated total. The only dimensional facts read are per-class cover-page share counts (MKT-03)."
+ID-10,ID,Facts that carry a legal-entity (co-registrant) member are excluded. The consolidated entity has no legal-entity member.
+ID-11,ID,"The value used carries the sign filed in the instance. A negative filed value is valid unless a DQC negative-value rule (ID-13 to ID-15) flags it. A wrong sign is rejected, never silently fixed (no abs() repair)."
+ID-12,ID,A value rendered with a negating label (edgartools preferred_sign = −1) is converted back to the filed sign before use.
+ID-13,ID,A value of an element on the DQC_0015 list is ≥ 0 unless a listed member exclusion applies.
+ID-14,ID,A value of an element on the DQC_0013 list is ≥ 0 when its precondition holds.
+ID-15,ID,A non-dimensional value of an element on the DQC_0014 list is ≥ 0.
+ID-16,ID,"A non-dimensional ""total"" equal to one dimensional member is suspect and flagged."
+ID-17,ID,Precision (decimals) never alters a value; it only sets the rounding tolerance (DQ-01).
+ID-18,ID,"Values are used as filed, never rescaled. A suspected scale error (a power-of-ten break against the company's own history, or ID-19 where executable) is flagged and the value quarantined, never corrected."
+ID-19,ID,Cover-page shares (dei:EntityCommonStockSharesOutstanding) and balance-sheet shares (CommonStockSharesOutstanding) differ by less than 100×.
+ID-20,ID,"Each line item's concept list covers the names in force during the data window (2020–2026). A concept declared in no taxonomy release of the window is not used. A concept's declared or deprecated status is read from the official FASB release files (2020–2026, registered with their SHA-256)."
+ID-21,ID,"Within one filing (instance), facts with the same concept, context and unit must agree within rounding. Agreeing duplicates are one fact. Conflicting duplicates are flagged and never resolved by row order."
+PER-01,PER,A value is used on date D only if it was available on or before D. Every stored value carries its availability date: the first trading day after the filing date (filed). The period end never decides availability.
+PER-02,PER,Each period's value is the one in its original filing. A later amendment or restatement does not replace it.
+PER-03,PER,The SEC frames API is not used for historical values.
+PER-04,PER,"Growth compares periods of the same filing. The CAGR is a 2-year CAGR: both ends come from one 10-K, which by Regulation S-X carries three fiscal years of income and cash-flow statements (two of balance sheets)."
+PER-05,PER,"A discrete Q4 flow is FY (10-K) − 9-month YTD (Q3 10-Q), with matching period boundaries."
+PER-06,PER,"A 10-Q TTM is FY(prior 10-K) − YTD(same period last year) + YTD(this year), from contiguous periods. A TTM not built from contiguous sub-periods (for example one quarter × 4) fails this rule and is flagged."
+PER-08,PER,"Two periods match when their end dates round to the same month end, and their length (end − start + 1 days) is within [364, 371] days for a year, [89, 98] for a quarter, [181, 189] for six months and [273, 280] for nine months (the year-to-date periods of PER-05 and PER-06)."
+PER-09,PER,"A transition report (10-KT, 10-QT) is never treated as a standard 12- or 3-month period."
+PER-10,PER,"The universe on date D is the index membership on D, including companies that later left."
+PER-11,PER,"Filings of companies that left the index remain retrievable, by CIK (APP-10a)."
+PER-12,PER,Growth across the adoption of an accounting standard without restated comparatives is flagged as non-comparable.
+PER-13,PER,ASC 842 case of PER-12: leverage and asset metrics across lease-standard adoption are flagged.
+PER-14,PER,CECL (ASC 326) case of PER-12: earnings growth across adoption is flagged.
+CON-01,CON,"Assets = LiabilitiesAndStockholdersEquity, when both are filed."
+CON-02,CON,"Assets = AssetsCurrent + AssetsNoncurrent, when all three are filed."
+CON-03,CON,"Liabilities = LiabilitiesCurrent + LiabilitiesNoncurrent, when all three are filed."
+CON-04,CON,Equity including NCI = parent equity + MinorityInterest.
+CON-05,CON,Comprehensive income = ProfitLoss + OCI.
+CON-06,CON,Contiguous sub-periods sum to the aggregated period.
+CON-07,CON,Net change in cash excluding exchange-rate effect = operating + investing + financing cash flows.
+CON-08,CON,Operating cash flow = continuing + discontinued operating cash flows. The total concept is used.
+CON-09,CON,The cash-flow calculation tree has a change-in-cash root.
+CON-10,CON,Shares outstanding ≤ shares authorized (DQC.US.0009.15).
+CON-11,CON,"The revenue used is the filed total (Revenues, or the sector total concept). A component is never the total."
+CON-12,CON,"A percent-type value is ≤ 10 (1,000%)."
+CON-19,CON,ProfitLoss = NetIncomeLoss + NetIncomeLossAttributableToNoncontrollingInterest.
+DQ-01,DQ,"Identity tolerance. An identity (CON, ID-02b map) is checked against threshold = max(rounding tolerance, 0.5% × |base|). The base is total assets (balance sheet), net income (income statement), or the period's change in cash (cash flow). Within rounding: pass. Above rounding, below threshold: WARN. Above threshold: material, inputs blocked."
+DQ-02,DQ,"Extreme values. In cross-sectional use (normalization, ranking), each ratio is winsorized at the 0.5% and 99.5% fractiles. The number of values set per tail is ⌊0.005 × n⌋, so nothing is trimmed when n < 200."
+MET-00,MET,"Missing ≠ 0, and missing ≠ neutral. A missing or nil input leaves the metric empty, never 0. A missing metric or factor is never imputed, neither as 0 nor as a neutral score (for example 50 or the median). A structural absence is declared by company type (APP) or left empty."
+MET-01,MET,ROA = operating income × (1 − tax rate) / total assets at the end of the prior year. Not applicable to financial firms (APP-02 excludes their NOPAT).
+MET-02,MET,"Beginning-of-period capital. ROIC and ROE divide by capital at the end of the prior year, never by ending capital."
+MET-03,MET,"NOPAT's tax is a hypothetical tax on operating income: the 21% federal marginal rate for every company except REITs (APP-04c). With operating income ≤ 0 the tax is 0, so NOPAT = operating income. Actual taxes paid are never used. effective_tax_rate (the metric) is reported from the filing, and is empty when pre-tax income ≤ 0 (L-05)."
+MET-04,MET,"Growth from a base ≤ 0 is not meaningful. Growth and CAGR are left empty, and flagged, when the base (or the first CAGR end) is ≤ 0."
+MET-05,MET,"Earnings yield with negative earnings. When earnings are negative, earnings_yield is not used as a continuous value: the company carries a negative-earnings flag (Fama and French's dummy), and the positive part is used."
+MET-06,MET,"Valuation multiples with an earnings or EBITDA denominator ≤ 0 are not estimated (P/E, EV/EBITDA)."
+MET-07,MET,"Debt = the filed debt lines, narrowest concept first (ID-02a). It excludes operating leases (L-01). The combined debt-and-lease element is used only when it is the company's only long-term debt line, and is then flagged ""includes finance leases"". Short-term debt (v1.3): LongTermDebtCurrent + ShortTermBorrowings first (disjoint by definition); CommercialPaper only when ShortTermBorrowings is absent (by definition it is a short-term borrowing); DebtCurrent last, flagged ""includes leases"". A line that includes current maturities (LongTermDebt) is never added to LongTermDebtCurrent. A term not filed: ID-02b."
+MET-08,MET,"Capex = PP&E payments plus the industry-specific investment lines, without software, intangibles or acquisitions. (a) Acquisitions are not capex (outside REITs, APP-04b): business combinations (PaymentsToAcquireBusinessesNetOfCashAcquired), purchases of oil & gas mineral interests (PaymentsToAcquireOilAndGasProperty) and of income-producing real estate (PaymentsToAcquireRealEstate). (b) Two lines are added only when their definitions are explicitly disjoint; otherwise the broadest line present is used: (1) PaymentsToAcquireProductiveAssets contains PP&E, software and intangibles: a flagged fallback, never added to PP&E; (2) construction in process is never added to PP&E, whose definition includes self-constructed assets; (3) ""other"" PP&E is the remainder of the specific lines: it may be added to the oil & gas lines, never to generic PP&E; (4) PaymentsToAcquireOilAndGasPropertyAndEquipment is used only when no finer line is filed, flagged ""includes acquisitions, contrary to (a)"" (its definition includes mineral interests). (c) Tie-break: when neither definition contains the other (for example oil & gas exploration and development beside oil & gas equipment) and both are filed as separate lines on the face of the same cash-flow statement, they are added and flagged. The net element PaymentsForProceedsFromProductiveAssets is a last resort, flagged. (b)(5) (v1.3): the PP&E-family lines — machinery and equipment, furniture and fixtures — are parts of PP&E: used as capex only when no PP&E line is filed, never added to it; PaymentsToAcquireOtherProductiveAssets (""tangible or intangible"") is a flagged fallback like PaymentsToAcquireProductiveAssets. (c) also covers a PP&E-family line beside an oil & gas line on the face of the same statement: both are added, flagged; an oil & gas tier never replaces a filed PP&E-family line."
+MET-09,MET,"Other ratios with a denominator ≤ 0. Denominator = 0: not defined, left empty. Denominator < 0: left out of the continuous score and flagged, in the manner of Fama and French's E/P dummy. Applies to net_debt_to_ebitda (EBITDA ≤ 0) and free_cash_flow_conversion (net income ≤ 0); interest_coverage is empty only when interest expense ≤ 0. Interest coverage with an operating loss and positive interest is valid: its denominator is positive, so lower still means worse."
+MKT-01,MKT,"One rule for every market value. Market value on date D = the close on D × the latest share count publicly available on D (the cover-page count of the latest filing whose availability date is ≤ D). VALORIZATION: D = the analysis date. Ratios stored per filing: D = the period end, and the ratio carries the filing's availability date (PER-01), never the period end."
+MKT-02,MKT,Same corporate-action basis. Share count and price are on the split basis of D.
+MKT-03,MKT,"Every share class counts. Company market cap = Σ over classes of (class count × that class's price). An unlisted class is valued through its conversion ratio to a listed class, cited from the company's own filing and recorded with its accession. With no filing that states a ratio, the class is flagged and the market cap marked incomplete."
+MKT-04,MKT,"The share count is total basic shares outstanding, all classes, not float-adjusted. Source: the cover-page count of the latest filing public on D; if absent, empty. A weighted-average count (basic or diluted) is never used for market value."
+APP-00,APP,"Company type comes from the table above. ""Financial firm"" means C2's four groups: Article 9 filers, Article 7 filers and other financial firms."
+APP-01,APP,"Article 9 filers: COGS, inventory turnover and the current/quick/cash ratios are not applicable; revenue comes from the total concepts, including RevenuesNetOfInterestExpense."
+APP-02,APP,"All financial firms: enterprise-value and debt-based metrics, NOPAT, ROIC and ROA are not applicable."
+APP-02b,APP,All financial firms: cash-flow metrics are not applicable.
+APP-03,APP,"Article 7 filers (insurers): revenue is premiums plus investment income; COGS, inventory and the current/quick/cash ratios are not applicable."
+APP-04,APP,"REITs: operating and earnings measures are flagged, because real-estate depreciation depresses them. FFO is not computed (L-02)."
+APP-04b,APP,"REIT capex = corporate items + existing properties + development + acquisitions. The components follow MET-08's addition rule (b): PaymentsForCapitalImprovements covers ""acquisition of or capital improvements"", so it is never added to an acquisition line such as PaymentsToAcquireRealEstate. FCF-based metrics are flagged as non-standard for REITs."
+APP-04c,APP,"REIT tax: REITs are outside the §11 corporate rate. NOPAT uses the REIT's own effective rate from its filing when pre-tax income > 0, and a tax of 0 otherwise. The 21% rate is never applied to a REIT."
+APP-07,APP,Negative book equity: ROE and D/E are not meaningful. ROIC is used only when invested capital > 0.
+APP-09,APP,"Liquidity depends on the balance-sheet form. Current, quick and cash ratios apply when AssetsCurrent and LiabilitiesCurrent are filed (Article 5 presents them ""when appropriate""); otherwise they are empty (MET-00). Article 7 and 9 filers: not applicable."
+APP-10a,APP,"A company's filings are identified by CIK, not ticker."
+APP-10b-1,APP,"Detect successions by the 8-K submission types 8-K12B, 8-K12G3, 8-K15D5 (and /A)."
+APP-10b-2,APP,Link a successor's series to its predecessor's only when the successor's 8-K for the succession says so. That filing's accession is the evidence.
+APP-10b-3,APP,"Complete: the predecessor's last full fiscal-year annual report must exist. If it is missing, multi-year metrics across the succession are left empty."
+L-01,L,"Operating leases are excluded from debt, which departs from C7 pp.31–32 (leases as debt, with operating income adjusted)"
+L-02,L,REIT FFO is not computed
+L-03,L,"Company type uses the current GICS classification, not the one in force on each date"
+L-04,L,"Amendments (10-K/A, 10-Q/A) are not ingested"
+L-05,L,effective_tax_rate with pre-tax income ≤ 0
+L-06,L,State and local income taxes are excluded from the marginal rate
+L-07,L,The filing's calculation linkbase (and A3's CAL table) is not read
+L-08,L,ID-19 and CON-10 cannot be executed
+L-09,L,"Revenue derived from the statement when the filed total is missing or contradicted (T-117, T-140)"
+L-10,L,"decimals is not captured, so DQ-01's rounding term has no per-fact value"
+L-11,L,Index membership from a secondary source (PER-10)
+A-01,A,"|net_margin| ≤ 5 (blocking); (1, 5] is a review flag"
+A-02,A,|operating_cash_flow_margin| ≤ 3
+A-03,A,"market_capitalization / total_assets within [0.001, 100]"
+A-04,A,Revenue > 0 whenever net income is reported (revenue ≤ 0 → revenue-based metrics not computed)
+A-05,A,|free_cash_flow_yield| ≤ 0.5
+MD-01,MD,ebitda
+MD-02,MD,invested capital
+MD-03,MD,net debt
+MD-04,MD,free cash flow
+MD-05,MD,nopat
+MD-06,MD,gross_margin
+MD-07,MD,operating_margin
+MD-08,MD,net_margin
+MD-09,MD,return_on_assets
+MD-10,MD,return_on_equity
+MD-11,MD,return_on_invested_capital
+MD-12,MD,current_ratio
+MD-13,MD,quick_ratio
+MD-14,MD,cash_ratio
+MD-15,MD,debt_to_equity
+MD-16,MD,debt_to_assets
+MD-17,MD,interest_coverage
+MD-18,MD,net_debt_to_ebitda
+MD-19,MD,asset_turnover
+MD-20,MD,inventory_turnover
+MD-21,MD,receivables_turnover
+MD-22,MD,revenue_growth
+MD-23,MD,operating_income_growth
+MD-24,MD,net_income_growth
+MD-25,MD,free_cash_flow_growth
+MD-26,MD,operating_cash_flow_margin
+MD-27,MD,free_cash_flow_margin
+MD-28,MD,free_cash_flow_conversion
+MD-29,MD,capex_intensity
+MD-30,MD,effective_tax_rate
+MD-31,MD,revenue_cagr
+MD-32,MD,net_income_cagr
+MD-33,MD,operating_cash_flow_cagr
+MD-34,MD,market_capitalization
+MD-35,MD,enterprise_value
+MD-36,MD,free_cash_flow_yield
+MD-37,MD,sbc_adjusted_fcf_yield
+MD-38,MD,enterprise_fcf_yield
+MD-39,MD,earnings_yield

@@ -57,3 +57,56 @@ def per_entities_for_articles(news: Database, article_ids: list[int]) -> Iterato
         rows = news.execute(sql, chunk)
         for r in rows:
             yield PerSpan(int(r["article_id"]), str(r["text"]), r["score"])
+
+
+# -- the change watermark (T-017) ---------------------------------------------------------------
+#
+# ``entity_resolution pending`` and the run itself describe "the news this build saw" with three
+# numbers. Each query is one of two index shapes, written out as literal SQL (never an identifier
+# built at runtime): ``discovered_urls.ticker`` for the first two, a rowid read for the third.
+
+_ROWID_PRAGMA = {
+    "discovered_urls": "PRAGMA table_info(discovered_urls)",
+    "article_entities": "PRAGMA table_info(article_entities)",
+}
+
+
+def id_is_rowid(news: Database, table: str) -> bool:
+    """``True`` when *table*'s ``id`` is its ``INTEGER PRIMARY KEY`` (a rowid alias), so
+    ``MAX(id)`` is a single index step. Any other shape answers ``False``: the watermark then
+    says it is unavailable rather than scan a 4.5 GB file."""
+    columns = news.execute(_ROWID_PRAGMA[table]).fetchall()
+    pk = [c for c in columns if int(c["pk"]) > 0]
+    return (
+        len(pk) == 1
+        and str(pk[0]["name"]).lower() == "id"
+        and str(pk[0]["type"]).strip().upper() == "INTEGER"
+    )
+
+
+def news_watermark(news: Database, tickers: list[str], *, until: str) -> dict[str, object]:
+    """``{"n_urls", "max_url_id", "max_entity_id"}`` -- what a build over *tickers* up to *until*
+    would read. ``n_urls`` / ``max_url_id`` aggregate the same rows as
+    :func:`article_ids_for_ticker` (``pub_date`` known and on or before *until*); ``max_entity_id``
+    is the newest NER row anywhere, so a span added later to an article already counted still
+    moves it (it also moves for other tickers and later dates -- a conservative over-trigger).
+    ``{"unavailable": <why>}`` when a table's ``id`` is not a rowid key."""
+    for table in ("discovered_urls", "article_entities"):
+        if not id_is_rowid(news, table):
+            return {"unavailable": f"{table}.id is not a rowid key"}
+    n_urls = 0
+    max_url_id = 0
+    for ticker in tickers:
+        row = news.execute(
+            "SELECT COUNT(*) AS n, MAX(id) AS top FROM discovered_urls "
+            "WHERE ticker = ? AND pub_date IS NOT NULL AND pub_date <= ?",
+            (ticker, until),
+        ).fetchone()
+        n_urls += int(row["n"])
+        max_url_id = max(max_url_id, int(row["top"] or 0))
+    entity = news.execute("SELECT MAX(id) AS top FROM article_entities").fetchone()
+    return {
+        "n_urls": n_urls,
+        "max_url_id": max_url_id,
+        "max_entity_id": int(entity["top"] or 0),
+    }

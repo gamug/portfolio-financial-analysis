@@ -17,7 +17,7 @@ schema itself back into each owning repo — see
 | `cycle/` | Strands selection / monitoring cycles → TECHNICAL/VALORIZATION scores, `veto`, `portfolio_position` | [cycle.md](cycle.md) |
 | `entity_resolution/` | `sharedExecutiveWith` edges from news co-occurrence | [entity_resolution.md](entity_resolution.md) |
 | `quant/` | Markowitz mean-variance benchmark portfolio → `corporate_action`, `quant_return_daily`, `quant_*` | [quant.md](quant.md) |
-| `api/` | Read-only FastAPI over the `v_*` views + `universe.db` | [api.md](api.md) |
+| `api/` | FastAPI: read routes over the `v_*` views + `universe.db`, plus the run endpoints (the orchestrator) | [api.md](api.md) |
 | `kg_schema/` | Passive shared schema, migrations, read-contract views | [kg_schema.md](kg_schema.md) |
 
 ## How they fit together

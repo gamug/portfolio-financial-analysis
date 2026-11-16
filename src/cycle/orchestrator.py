@@ -11,11 +11,11 @@ from __future__ import annotations
 import json
 import logging
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 
-from portfolio_common.db import Database
+from portfolio_common.db import Database, Row
 
 from cycle import data, writers
 from cycle.config import CycleSettings
@@ -36,11 +36,12 @@ from cycle.rules import (
     seed_catalog,
     soft_penalties,
 )
-from cycle.scores import sector, technical, valorization
+from cycle.scores import defensive, sector, technical, valorization
 from cycle.scores.normalize import normalized_scores
 from cycle.state import (
     check_construction,
     check_manifest,
+    check_replay_inputs,
     check_score_weights,
     checkpoint,
     done_steps,
@@ -50,11 +51,14 @@ from cycle.state import (
 )
 from cycle.writers import OutOfOrderCycle, out_of_order_reason
 from kg_schema import availability, connect
+from kg_schema.applicability import applicability
+from kg_schema.company_profile import CompanyProfile
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import (
     StaleAsOf,
     StaleGateVersion,
     connect_ro,
+    risk_model_asset_ids,
     stale_as_of_reason,
     stale_gate_version_reason,
     veto_out_of_order_reason,
@@ -67,6 +71,14 @@ from kg_schema.versions import (
 )
 
 FundamentalHook = Callable[[Database, list[int], str], None]
+
+#: The eligibility rule a run was built on, recorded in its manifest (T-153 part 3c). C11 printed
+#: p.36 applied by analogy (index addition -> selection): a member is usable on cycle date D only
+#: with a close on the market's latest NYSE session on or before D, in the cycle's own
+#: ``price_observation`` engine version. The price vetoes keep their own 7-day window.
+#: A run recorded before this value cannot be resumed under the new rule: the ranking would mix
+#: two eligibilities, so ``check_manifest`` refuses it -- redo it fresh, or at another date.
+ELIGIBILITY_MANIFEST = "session-close-v1"
 
 log = logging.getLogger(__name__)
 
@@ -115,11 +127,20 @@ class CycleReport:
     # Their tickers, so the CLI can name them without a separate cycle_ranking query
     # (PR #99 review).
     unscored_tickers: list[str] = field(default_factory=list)
+    # Universe members with no usable close on the cycle date's latest session (T-153 part 3c):
+    # ineligible for selection, marked in cycle_ranking, never a count of HARD/SOFT vetoes.
+    unpriced: int = 0
+    # Their tickers, read back from cycle_ranking like the unscored ones (PR #99 review).
+    unpriced_tickers: list[str] = field(default_factory=list)
     # The book `positions` built (T-136): its caps, relaxations, shortfall and pin notes, and each
     # held name's ``(ticker, sector, weight)`` in rank order. None on a MONITORING run, or when a
     # resume skipped the step.
     book: BookResult | None = None
     book_rows: list[tuple[str, str | None, float]] = field(default_factory=list)
+    # The ids the book holds, in rank order, read back from ``cycle_ranking.selected`` (WP-C):
+    # never a separate source of truth, so a resumed run (whose ``positions`` step is skipped)
+    # still reports its book. Empty on a MONITORING run -- nothing is selected there.
+    selected_asset_ids: list[int] = field(default_factory=list)
 
 
 class PreferencesNeedDryRun(RuntimeError):
@@ -133,16 +154,21 @@ def _book_candidates(
     price_obs: Mapping[int, Mapping[str, float | None]],
 ) -> list[BookCandidate]:
     """The ranked cohort as ``build_book`` input. HARD-vetoed names (at the T-1 cutoff) are passed
-    in, marked, so a HARD pin is refused with its reason; UNSCORED names are ineligible and left
-    out (a pin on one is refused as "not among the candidates")."""
+    in, marked, so a HARD pin is refused with its reason; UNSCORED, UNPRICED and NO_RISK_MODEL
+    names are ineligible and left out (a pin on one is refused as "not among the candidates"). A
+    data-gap marker is never a SOFT veto, so it takes no penalty off the blended score."""
     cands: list[BookCandidate] = []
     for r in rows:
         aid = int(r["asset_id"])
         rules = r["veto_rules"]
         veto: VetoStatus = "HARD" if "HARD" in rules else "none"
-        if veto == "none" and "UNSCORED" in rules:
+        if veto == "none" and any(
+            marker in rules for marker in ("UNSCORED", "UNPRICED", "NO_RISK_MODEL")
+        ):
             continue
-        if veto == "none" and any(rule not in ("HARD", "UNSCORED") for rule in rules):
+        if veto == "none" and any(
+            rule not in ("HARD", "UNSCORED", "UNPRICED", "NO_RISK_MODEL") for rule in rules
+        ):
             veto = "SOFT"
         cands.append(
             BookCandidate(
@@ -168,6 +194,26 @@ def _call_build_book(settings: CycleSettings, cands: list[BookCandidate]) -> Boo
         exclude=settings.exclude,
         exclude_sectors=settings.exclude_sectors,
         only_sectors=settings.only_sectors,
+    )
+
+
+def _require_top_n(
+    book: BookResult, rows: list[dict], n_model_assets: int, risk_model_id: int, top_n: int
+) -> None:
+    """Refuse a restricted selection that cannot hold exactly *top_n* names (WP-C).
+
+    With ``risk_model_id`` set the cohort is the model's panel; a book shorter than ``top_n``
+    means too few of the ranked names are both covered and eligible. That is reported with where
+    the names went, never silently traded as a smaller book."""
+    if len(book.weights) == top_n:
+        return
+    no_model = sum(1 for r in rows if "NO_RISK_MODEL" in r["veto_rules"])
+    hard = sum(1 for r in rows if "HARD" in r["veto_rules"])
+    raise data.TooFewCandidates(
+        f"only {len(book.weights)} of the {top_n} names a Top-N selection must hold are eligible "
+        f"under risk model {risk_model_id} ({n_model_assets} assets): of {len(rows)} ranked "
+        f"names, {no_model} are NO_RISK_MODEL and {hard} HARD-vetoed; the book is never padded "
+        "or shrunk"
     )
 
 
@@ -224,6 +270,56 @@ def _t_minus_1(cycle_date: str) -> str:
     return (date.fromisoformat(cycle_date) - timedelta(days=1)).isoformat()
 
 
+def _value_applicability(
+    profile: CompanyProfile | None, negative_equity: bool
+) -> dict[str, tuple[str, str]]:
+    """Each VALORIZATION measure's applicability cell (D2) on the member's APP-00 profile.
+
+    The matrix's cell for the measure's own metric (``valorization.MATRIX_METRIC``); a member with
+    **no** profile is never guessed, so every measure applies; the regulated-utility overlay (D-13,
+    the user's decision) leaves the enterprise FCF yield not applicable."""
+    out: dict[str, tuple[str, str]] = {}
+    for measure, metric in valorization.MATRIX_METRIC.items():
+        if profile is None:
+            out[measure] = ("A", "")
+        else:
+            out[measure] = applicability(metric, profile, negative_equity=negative_equity)
+    if profile is not None and profile.regulated_utility:
+        out[valorization.ENTERPRISE_FCF_YIELD] = ("NA", "the user's decision (D-13)")
+    return out
+
+
+def _fundamental_normalization(
+    conn: Database,
+    cycle_date: str,
+    weights: Mapping[str, float],
+    member_ids: set[int],
+) -> tuple[list[Row], list[float]]:
+    """``(rows, normalized)`` for each **universe member's** newest scored FUNDAMENTAL row on *cycle_date*.
+
+    T-073 (D4) decides a row's total under *weights* (:func:`data.fundamental_value_under`); this
+    normalizes those totals across the cohort. **One function for both the ``normalize`` writer and
+    the ``rank`` reader** (T-071 part 2b, D4/N9): the ranking must read *this* cycle's normalization,
+    not whatever the shared filing snapshot row's ``normalized_score`` holds -- a run resumed at
+    ``rank`` after another cycle date ran in between would otherwise blend the other date's value
+    (``cycle backfill`` resumes from checkpoints, so this happens). It is deterministic, so a fresh
+    run and a resumed one get the same numbers.
+
+    A-2 cohort fix: only the date's universe members enter the cohort. A non-member row is a
+    future member (lookahead) or a stale former member, and is neither normalized nor written;
+    TECHNICAL and VALORIZATION already normalize over member rows only. The member ids are the
+    same ``data.active_universe`` result the run ranks, passed by the caller."""
+    rows = [
+        r
+        for r in data.latest_fundamental_rows(conn, cycle_date)
+        if r["raw_value"] is not None and int(r["asset_id"]) in member_ids
+    ]
+    if not rows:
+        return [], []
+    normalized = normalized_scores([data.fundamental_value_under(r, weights) for r in rows])
+    return rows, normalized
+
+
 def _blended(
     per_type: dict[str, dict[int, float | None]], weights: dict[str, float], asset_id: int
 ) -> tuple[float, dict[str, float | None]]:
@@ -238,6 +334,38 @@ def _blended(
     return (num / den if den else 0.0), parts
 
 
+def _apply_defensive_tilt(
+    settings: CycleSettings,
+    cycle_date: str,
+    asset_ids: Sequence[int],
+    blended: dict[int, float],
+) -> tuple[dict[int, float], bool]:
+    """Apply the preregistered defensive tilt to the blended ranking scores (§3).
+
+    The market index and the per-asset return windows are the causal series the driver loaded
+    from ``quant_return_daily`` (sessions ``<= cycle_date`` only). A name without a beta keeps
+    its blended score."""
+    market = settings.market_returns
+    if not market:
+        raise ValueError(
+            f"tilt {settings.defensive_tilt} needs the driver's market/price return series"
+        )
+    r63, r126 = defensive.r63_r126(market, cycle_date)
+    fired = defensive.trigger_fires(settings.defensive_tilt, r63, r126)
+    if not fired:
+        return blended, False
+    returns = settings.price_returns or {}
+    sessions = sorted(day for day in market if day <= cycle_date)[-defensive.BETA_WINDOW :]
+    betas: dict[int, float] = {}
+    market_values = [market[session] for session in sessions]
+    for asset_id in asset_ids:
+        asset_values = [returns.get(session, {}).get(asset_id, math.nan) for session in sessions]
+        value = defensive.beta(asset_values, market_values)
+        if value is not None:
+            betas[asset_id] = value
+    return defensive.tilted_scores(blended, betas, settings.defensive_tilt, fired=True), True
+
+
 def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequence
     settings: CycleSettings,
     cycle_type: str,
@@ -246,7 +374,16 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     *,
     conn: Database,
     fundamental_hook: FundamentalHook | None,
+    risk_model_id: int | None = None,
+    veto_cutoff_same_day: bool = False,
 ) -> CycleReport:
+    if veto_cutoff_same_day and cycle_type != "REPLAY":
+        # WP-C, BACKTEST_SPEC §8.3: the R cutoff is the backtest's declared variation, never the
+        # live book's rule (T-070's contagion lag stays R-1 there).
+        raise ValueError(
+            "veto_cutoff_same_day is a REPLAY-only cut: the live SELECTION/MONITORING book "
+            "filters vetoes as of R-1 (the T-070 contagion lag) and must not change"
+        )
     if cycle_type == "SELECTION" and settings.has_preferences:
         # The live book is the thesis book: preferences make it decision support (T-134 decision 6),
         # so a writing select refuses them -- `--dry-run` previews them, `backfill` replays with them.
@@ -259,6 +396,11 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     # Every fundamental read below keys on `available_at` (T-107): refuse to run on rows that
     # predate its backfill rather than read none of them.
     availability.require(conn)
+    # WP-C: the cohort a Top-N selection must come from, resolved once, before any run row exists
+    # (an unknown model is a clear refusal, never a half-read or an empty cohort).
+    risk_ids: frozenset[int] | None = None
+    if risk_model_id is not None:
+        risk_ids = frozenset(risk_model_asset_ids(conn, risk_model_id))
     # Resolve the metric versions this run reads (T-090) and refuse to resume an earlier run of
     # the same (type, date) that was built on different ones -- before touching that run.
     versions = resolve_metric_versions(conn, parse_metric_selection(settings.metrics_version))
@@ -266,12 +408,22 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         "consumer": "cycle",
         "metrics": versions.manifest(),
         "quality": DATA_QUALITY_GATE_VERSION,
+        "eligibility": ELIGIBILITY_MANIFEST,
     }
     tag = manifest_tag(manifest)
-    check_manifest(conn, cycle_type, cycle_date, tag)
+    check_manifest(conn, cycle_type, cycle_date, tag, manifest)
     # T-141: params_json.score_weights is written once, by the first attempt; every ranking of
     # this run must use those weights, so refuse a resume under others (any cycle type).
     check_score_weights(conn, cycle_type, cycle_date, settings.score_weights)
+    # WP-C: the selection cut (risk model, veto cutoff) is recorded once and never rewritten, so a
+    # resume under another one would replace this date's cohort silently -- refuse it here.
+    check_replay_inputs(
+        conn,
+        cycle_type,
+        cycle_date,
+        risk_model_id=risk_model_id,
+        veto_cutoff_same_day=veto_cutoff_same_day,
+    )
     if "positions" in steps:
         # T-136: never resume onto a different book than the one the first attempt built.
         check_construction(conn, cycle_type, cycle_date, settings.construction())
@@ -312,56 +464,74 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         cycle_date,
         {
             # Preferences are recorded by `positions` once a book is built, with the rest of it.
-            **settings.model_dump(exclude={"pins", "exclude", "exclude_sectors", "only_sectors"}),
+            **settings.model_dump(
+                exclude={
+                    "pins",
+                    "exclude",
+                    "exclude_sectors",
+                    "only_sectors",
+                    "market_returns",
+                    "price_returns",
+                }
+            ),
             "manifest": manifest,
             "manifest_tag": tag,
             "technical_version": technical.VERSION,
+            "valorization_version": valorization.VERSION,
             "stale_as_of_bypassed": stale_reason,
             "dirty_tree_bypassed": dirty_reason,
             "stale_dq_gate_bypassed": gate_reason,
+            # WP-C: the selection cut this run's ranking and book were built under --
+            # `check_replay_inputs` refuses a resume under other values.
+            "risk_model_id": risk_model_id,
+            "veto_cutoff_same_day": veto_cutoff_same_day,
         },
         code_version=cv,
     )
-    already = done_steps(conn, run_id)
-    report = CycleReport(run_id, cycle_type, cycle_date, manifest_tag=tag)
-    report.stale_price_bypassed = stale_reason
-    report.dirty_tree_bypassed = dirty_reason
-    report.stale_dq_gate_bypassed = gate_reason
-
-    universe_rows = data.active_universe(
-        conn, settings.universe, cycle_date, settings.universe_db_path
-    )
-    asset_ids = [int(r["id"]) for r in universe_rows]
-    sector_of = {int(r["id"]): r["sector_id"] for r in universe_rows}
-    ticker_of = {int(r["id"]): str(r["ticker"]) for r in universe_rows}
-    sector_name_of = {int(r["id"]): r["sector"] for r in universe_rows}
-    # Ring-1 data-quality gates (T-065): quarantined metrics read as NULL everywhere below.
-    dq = data.data_quality(conn, cycle_date, versions)
-    metrics = dq.apply(data.latest_metrics(conn, cycle_date, versions))
-    price_obs = data.latest_price_observation(conn, cycle_date, settings.observation_engine_version)
-
-    def _do(step: str, fn: Callable[[], dict]) -> None:
-        if step in already:
-            report.steps_skipped.append(step)
-            return
-        checkpoint(conn, run_id, step, "running")
-        try:
-            detail = fn() or {}
-        except Exception as exc:
-            # Leave a "failed" checkpoint rather than a stuck "running" one (T-097 review) --
-            # e.g. the out-of-order-cycle guard refusing mid-step. Re-raised untouched; the
-            # caller (_run) marks the parent cycle_run failed too.
-            checkpoint(conn, run_id, step, "failed", {"error": str(exc)})
-            raise
-        checkpoint(conn, run_id, step, "done", detail)
-        report.steps_run.append(step)
-
-    # The whole step sequence below is one try block so that ANY exception -- the out-of-order
-    # guard's refusal included -- leaves cycle_run "failed" rather than stuck "running" forever
-    # (T-097 review: cycle_checkpoint's own DDL comment already documents 'failed' as a status,
-    # but nothing wrote it). _do() marks the individual step's checkpoint "failed" first; this
-    # marks the parent run, then re-raises unchanged for the caller (CLI / tests) to handle.
+    # The whole execution after open_cycle is wrapped in try..except so that ANY exception --
+    # including interrupts or failures during data loading or step execution -- leaves cycle_run
+    # "failed" rather than stuck "running" forever (T-142 review). conn.rollback() runs first so
+    # uncommitted writes are undone, then finish_cycle marks the parent run failed before re-raising
+    # unchanged.
     try:
+        already = done_steps(conn, run_id)
+        report = CycleReport(run_id, cycle_type, cycle_date, manifest_tag=tag)
+        report.stale_price_bypassed = stale_reason
+        report.dirty_tree_bypassed = dirty_reason
+        report.stale_dq_gate_bypassed = gate_reason
+
+        universe_rows = data.active_universe(
+            conn, settings.universe, cycle_date, settings.universe_db_path
+        )
+        asset_ids = [int(r["id"]) for r in universe_rows]
+        sector_of = {int(r["id"]): r["sector_id"] for r in universe_rows}
+        ticker_of = {int(r["id"]): str(r["ticker"]) for r in universe_rows}
+        sector_name_of = {int(r["id"]): r["sector"] for r in universe_rows}
+        # Ring-1 data-quality gates (T-065): quarantined metrics read as NULL everywhere below.
+        dq = data.data_quality(conn, cycle_date, versions)
+        metrics = dq.apply(data.latest_metrics(conn, cycle_date, versions))
+        price_obs = data.latest_price_observation(
+            conn, cycle_date, settings.observation_engine_version
+        )
+
+        def _do(step: str, fn: Callable[[], dict]) -> None:
+            if step in already:
+                report.steps_skipped.append(step)
+                return
+            checkpoint(conn, run_id, step, "running")
+            try:
+                detail = fn() or {}
+            except BaseException as exc:
+                # Leave a "failed" checkpoint rather than a stuck "running" one (T-097 review) --
+                # e.g. the out-of-order-cycle guard refusing mid-step. Roll back any uncommitted
+                # writes before writing the checkpoint, which commits (T-142). Re-raised untouched;
+                # the caller (_run) marks the parent cycle_run failed too.
+                conn.rollback()
+                checkpoint(conn, run_id, step, "failed", {"error": str(exc)})
+                raise
+            checkpoint(conn, run_id, step, "done", detail)
+            report.steps_run.append(step)
+
         # -- universe
         _do("universe", lambda: {"assets": len(asset_ids)})
 
@@ -401,31 +571,38 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         # -- valorization
         def _valorization() -> dict:
             mcap = data.market_cap_estimates(conn, cycle_date, list(asset_ids))
-            trailing_ni = data.latest_trailing_net_income(conn, cycle_date, versions)
-            rows = {}
+            caps = data.market_cap_details(conn, cycle_date, list(asset_ids))
+            rule_inputs = data.value_inputs(conn, cycle_date)
+            profiles = data.asset_profiles(conn, list(asset_ids), cycle_date)
+            members: dict[int, valorization.Member] = {}
             no_cap = 0
             negative_earnings = 0
             for a in asset_ids:
-                m = dict(metrics.get(a, {}))
-                quarantined = dq.quarantined.get(a, set())
-                mc = None if "valuation.market_capitalization" in quarantined else mcap.get(a)
-                if a in dq.negative_equity:
-                    # D/E is quarantined, but negative book equity is still the worst leverage
-                    # in the cohort, never a missing factor (C2, docs/model_fixes.md).
-                    m["leverage.debt_to_equity"] = float("inf")
-                ni = trailing_ni.get(a)
-                if ni is not None and mc and "profitability.return_on_assets" not in quarantined:
-                    # MET-05 (Fama and French): E(+)/P -- the positive part -- with the
-                    # negative-earnings dummy kept apart (counted below, not ranked): a loss
-                    # contributes 0, the lowest earnings yield, never a negative one.
-                    m["earnings_yield"] = max(ni, 0.0) / mc
-                    negative_earnings += ni < 0
-                if mc:
-                    m["neg_log_market_cap"] = -math.log(mc)
-                else:
-                    no_cap += 1  # T-132: a missing size factor, reported rather than guessed
-                rows[a] = m
-            scores = valorization.compute(rows)
+                cap = caps.get(a)
+                if mcap.get(a) is None:
+                    no_cap += 1  # T-132: a missing market cap, reported rather than guessed
+                rule = rule_inputs.get(a) or {}
+                inputs = rule.get("inputs") or {}
+                profile = profiles.get(a)
+                net_income = inputs.get("net_income_ttm")
+                if isinstance(net_income, (int, float)) and not isinstance(net_income, bool):
+                    negative_earnings += float(net_income) < 0.0
+                members[a] = valorization.Member(
+                    asset_id=a,
+                    market_cap=mcap.get(a),
+                    values=inputs,
+                    applicable=_value_applicability(profile, a in dq.negative_equity),
+                    quarantined=frozenset(dq.quarantined.get(a, set())),
+                    cohort=(
+                        valorization.FINANCIAL
+                        if profile is not None and profile.financial_firm
+                        else valorization.OTHER
+                    ),
+                    share_date=cap.share_as_of if cap is not None else None,
+                    close_date=cap.close_date if cap is not None else None,
+                    accession=rule.get("accession"),
+                )
+            scores = valorization.compute(members)
             writers.write_scores(
                 conn,
                 "VALORIZATION",
@@ -434,12 +611,12 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 {},
                 {s.asset_id: s.components for s in scores},
                 run_id=run_id,
+                model=valorization.VERSION,
             )
-            with_yield = sum(1 for r in rows.values() if r.get("earnings_yield") is not None)
             return {
-                "scored": len(scores),
+                "scored": sum(1 for s in scores if s.raw_value is not None),
+                "empty": sum(1 for s in scores if s.raw_value is None),
                 "market_cap_missing": no_cap,
-                "earnings_yield": with_yield,
                 "negative_earnings": negative_earnings,
             }
 
@@ -473,13 +650,10 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             # FUNDAMENTAL is normalized against each asset's latest *public* filing snapshot
             # (T-106), and the value lands on that snapshot row alone -- by id, not on every
             # row of the asset that happens to share its raw score.
-            frows = [
-                r
-                for r in data.latest_fundamental_rows(conn, cycle_date)
-                if r["raw_value"] is not None
-            ]
+            frows, fn = _fundamental_normalization(
+                conn, cycle_date, settings.fundamental_pillar_weights, set(asset_ids)
+            )
             if frows:
-                fn = normalized_scores([float(r["raw_value"]) for r in frows])
                 conn.executemany(
                     "UPDATE score_snapshot SET normalized_score = ? WHERE id = ?",
                     [(fn[i], int(frows[i]["id"])) for i in range(len(frows))],
@@ -547,6 +721,11 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 last_fundamental=data.last_fundamental_dates(conn, cycle_date),
                 data_quality={a: dq.hard[a] for a in asset_ids if a in dq.hard},
                 sectors={a: sector_name_of.get(a) for a in asset_ids},
+                negative_equity={
+                    a: dq.negative_equity[a] for a in asset_ids if a in dq.negative_equity
+                },
+                profiles=data.asset_profiles(conn, list(asset_ids), cycle_date),
+                utility_cash_coverage=data.utility_cash_coverage(conn, cycle_date),
             )
             # RuleResult.evaluated (T-125 b): each rule's own could-resolve set, so a missing
             # cycle keeps a stint open instead of the writer misreading "no data" as "cleared".
@@ -588,14 +767,30 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         ranked_cache: dict[str, list[dict]] = {}
 
         def _rank() -> dict:
-            cutoff = _t_minus_1(cycle_date)
+            # WP-C: the backtest's REPLAY selects with the vetoes as of the cycle date itself
+            # (`veto_cutoff_same_day`), against the live book's T-1 contagion lag (T-070).
+            cutoff = cycle_date if veto_cutoff_same_day else _t_minus_1(cycle_date)
             hard = writers.hard_vetoed_as_of(conn, cutoff)
             soft = writers.active_soft_vetoes(conn, cutoff)
+            # WP-C: names the run's risk model does not cover can be neither optimized nor held by
+            # the Top-N arm -- marked, never selected, and never a HARD/SOFT veto or a coverage
+            # refusal (the `unscored_max_share` brake below counts scores and prices only).
+            no_model = (
+                {a for a in asset_ids if a not in risk_ids} if risk_ids is not None else set()
+            )
+            # N9 (T-071 part 2b, D4): read **this** cycle's FUNDAMENTAL normalization, recomputed
+            # from the rows, never the shared snapshot row's `normalized_score` -- a `rank` resumed
+            # after another cycle date ran in between would otherwise blend the other date's value.
+            # The `normalize` step still writes the column, for the contract (the stored value is
+            # the last cycle's; the per-cycle value is `v_cycle_ranking_component.component_value`).
+            frows, fn = _fundamental_normalization(
+                conn, cycle_date, settings.fundamental_pillar_weights, set(asset_ids)
+            )
+            fundamental: dict[int, float | None] = {
+                int(frows[i]["asset_id"]): fn[i] for i in range(len(frows))
+            }
             per_type = {
-                "FUNDAMENTAL": {
-                    int(r["asset_id"]): r["normalized_score"]
-                    for r in data.latest_fundamental_rows(conn, cycle_date)
-                },
+                "FUNDAMENTAL": fundamental,
                 "TECHNICAL": _norm_map(conn, "TECHNICAL", cycle_date),
                 "VALORIZATION": _norm_map(conn, "VALORIZATION", cycle_date),
                 "SEMANTIC": _norm_map(conn, "SEMANTIC", cycle_date),
@@ -606,23 +801,43 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             # universe missing entirely refuses the run outright rather than build a portfolio
             # blind on most of it.
             unscored = data.unscored_assets(asset_ids, per_type["FUNDAMENTAL"])
-            unscored_reason = data.too_many_unscored_reason(
-                unscored, len(asset_ids), settings.unscored_max_share
+            # T-153 part 3c (D1): a member with no close on the cycle date's latest NYSE session
+            # (C11 printed p.36 by analogy) is ineligible the same way -- a data gap, never a
+            # veto -- and both gaps share one coverage refusal, counted once per asset (D2).
+            unpriced = data.unpriced_assets(
+                conn, asset_ids, cycle_date, settings.observation_engine_version
             )
-            if unscored_reason is not None:
-                raise data.TooManyUnscored(unscored_reason)  # noqa: TRY301
+            unrankable_reason = data.too_many_unrankable_reason(
+                unscored, unpriced, len(asset_ids), settings.unscored_max_share
+            )
+            if unrankable_reason is not None:
+                raise data.TooManyUnscored(unrankable_reason)  # noqa: TRY301
             # each SOFT rule's own points (BREAK_TREND_200 is flag-only: 0), else the run's default
             default = settings.soft_veto_penalty
             points = soft_penalties(default)
-            scored = []
+            bases: dict[int, float] = {}
+            parts_by_asset: dict[int, dict[str, float | None]] = {}
             for a in asset_ids:
                 base, parts = _blended(per_type, settings.score_weights, a)
+                bases[a] = base
+                parts_by_asset[a] = parts
+            tilt_fired = False
+            if settings.defensive_tilt != "T0":
+                bases, tilt_fired = _apply_defensive_tilt(settings, cycle_date, asset_ids, bases)
+                conn.execute(
+                    "UPDATE cycle_run SET params_json = json_set(params_json, "
+                    "'$.tilt_triggered', ?) WHERE id = ?",
+                    (1 if tilt_fired else 0, run_id),
+                )
+                conn.commit()
+            scored = []
+            for a in asset_ids:
                 penalty = sum(points.get(rid, default) for rid in soft.get(a, []))
-                scored.append((a, base - penalty, parts))
+                scored.append((a, bases[a] - penalty, parts_by_asset[a]))
             scored.sort(key=lambda t: t[1], reverse=True)
             ranked = []
             for rank, (a, blended, parts) in enumerate(scored, start=1):
-                ineligible = a in unscored
+                ineligible = a in unscored or a in unpriced or a in no_model
                 ranked.append(
                     {
                         "asset_id": a,
@@ -632,28 +847,44 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                         "vetoed": a in hard or ineligible,
                         "veto_rules": soft.get(a, [])
                         + (["HARD"] if a in hard else [])
-                        + (["UNSCORED"] if ineligible else []),
+                        + (["UNSCORED"] if a in unscored else [])
+                        + (["UNPRICED"] if a in unpriced else [])
+                        + (["NO_RISK_MODEL"] if a in no_model else []),
                         "selected": False,
                         "target_weight": None,
                     }
                 )
             ranked_cache["rows"] = ranked
             writers.write_ranking(conn, run_id, ranked)
-            return {"ranked": len(ranked), "hard_vetoed": len(hard), "unscored": len(unscored)}
+            return {
+                "ranked": len(ranked),
+                "hard_vetoed": len(hard),
+                "unscored": len(unscored),
+                "unpriced": len(unpriced),
+                "no_risk_model": len(no_model),
+            }
 
         _do("rank", _rank)
+
         # Read back from cycle_ranking, not the `unscored` local above -- it only exists when
         # `rank` actually ran this call; a resumed run that skips an already-`done` `rank` step
         # (T-097's own resume contract) would otherwise leave `report.unscored` at its default 0
         # even though the persisted ranking has UNSCORED rows (PR #99 review).
-        unscored_rows = conn.execute(
-            "SELECT a.ticker FROM cycle_ranking r JOIN assets a ON a.id = r.asset_id, "
-            "json_each(r.veto_rules_json) je "
-            "WHERE r.cycle_run_id = ? AND je.value = 'UNSCORED' ORDER BY a.ticker",
-            (run_id,),
-        ).fetchall()
-        report.unscored = len(unscored_rows)
-        report.unscored_tickers = [str(row["ticker"]) for row in unscored_rows]
+        def _gap_rows(marker: str) -> list[str]:
+            return [
+                str(row["ticker"])
+                for row in conn.execute(
+                    "SELECT a.ticker FROM cycle_ranking r JOIN assets a ON a.id = r.asset_id, "
+                    "json_each(r.veto_rules_json) je "
+                    "WHERE r.cycle_run_id = ? AND je.value = ? ORDER BY a.ticker",
+                    (run_id, marker),
+                ).fetchall()
+            ]
+
+        report.unscored_tickers = _gap_rows("UNSCORED")
+        report.unscored = len(report.unscored_tickers)
+        report.unpriced_tickers = _gap_rows("UNPRICED")
+        report.unpriced = len(report.unpriced_tickers)
 
         # -- positions (SELECTION only)
         if "positions" in steps:
@@ -662,6 +893,13 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 rows = ranked_cache.get("rows") or _load_ranking(conn, run_id)
                 cands = _book_candidates(rows, ticker_of, sector_name_of, price_obs)
                 book = _call_build_book(settings, cands)
+                if risk_model_id is not None:
+                    # WP-C: the backtest's Top-N arm holds exactly `top_n` names -- the book has
+                    # already gone down the ranking past the names the model does not cover,
+                    # under the same sector-count cap (`build_book`'s `_fill`). A short book here
+                    # is a data problem (HARD vetoes, unscored, unpriced, uncovered) to report,
+                    # never a smaller portfolio to trade.
+                    _require_top_n(book, rows, len(risk_ids or ()), risk_model_id, settings.top_n)
                 weights = book.weights
                 closes = {a: (price_obs.get(a) or {}).get("close") for a in weights}
                 if cycle_type == "REPLAY":
@@ -709,8 +947,22 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
 
             _do("positions", _positions)
 
+        # WP-C: the report's book is read back from the persisted ranking, so a resumed run --
+        # whose `positions` step was skipped -- reports the same ids as the run that wrote them.
+        if "positions" in steps and ({"positions"} & set(report.steps_run + report.steps_skipped)):
+            report.selected_asset_ids = [
+                int(r["asset_id"])
+                for r in conn.execute(
+                    "SELECT asset_id FROM cycle_ranking WHERE cycle_run_id = ? AND selected = 1 "
+                    "ORDER BY rank",
+                    (run_id,),
+                ).fetchall()
+            ]
+            report.selected = len(report.selected_asset_ids)
+
         finish_cycle(conn, run_id, "completed")
-    except Exception:
+    except BaseException:
+        conn.rollback()
         finish_cycle(conn, run_id, "failed")
         raise
     return report
@@ -877,17 +1129,32 @@ def run_monitoring(
             conn.close()
 
 
-def run_replay(
+def run_replay(  # noqa: PLR0913 - the §8.3 interface: two conn/hook passthroughs, two cuts
     settings: CycleSettings,
     cycle_date: str,
     *,
     conn: Database | None = None,
     fundamental_hook: FundamentalHook | None = None,
+    risk_model_id: int | None = None,
+    veto_cutoff_same_day: bool = False,
 ) -> CycleReport:
     """``cycle backfill``'s entrypoint (T-115): the same step sequence and checkpointing as
     :func:`run_selection`, but ``cycle_type='REPLAY'`` keeps its ``cycle_run``/
     ``cycle_checkpoint`` rows and its positions (``portfolio_position_replay``, via
-    ``cycle.replay``) entirely separate from a live ``select`` run at the same date."""
+    ``cycle.replay``) entirely separate from a live ``select`` run at the same date.
+
+    Two cuts the backtest adds (WP-C, BACKTEST_SPEC §8.3), both REPLAY-only:
+
+    * *risk_model_id* -- the Top-N selection comes from ``quant`` risk model M's panel
+      (``kg_schema.queries.risk_model_asset_ids``): a ranked name outside it is marked
+      ``NO_RISK_MODEL`` in ``cycle_ranking.veto_rules_json``, never selected, and the book keeps
+      filling down the ranking under the same sector cap. It must end with exactly ``top_n``
+      selected or raise :class:`cycle.data.TooFewCandidates`.
+    * *veto_cutoff_same_day* -- ``rank`` filters HARD and SOFT vetoes as of ``cycle_date`` itself
+      instead of R-1 (the live book's T-070 contagion lag).
+
+    Both are recorded in the run's ``params_json``; a resume under other values is refused
+    (``cycle.state.check_replay_inputs``)."""
     owned = conn is None
     if conn is None:
         conn = connect(settings.db_path)
@@ -899,6 +1166,8 @@ def run_replay(
             _SELECTION_STEPS,
             conn=conn,
             fundamental_hook=fundamental_hook,
+            risk_model_id=risk_model_id,
+            veto_cutoff_same_day=veto_cutoff_same_day,
         )
     finally:
         if owned:

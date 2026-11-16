@@ -164,3 +164,13 @@ def last_final_session(now: datetime) -> date:
     while not is_trading_day(day) or now < session_final_at(day):
         day -= timedelta(days=1)
     return day
+
+
+def last_session_on_or_before(day: date) -> date:
+    """The latest NYSE trading day on or before *day* (*day* itself when it is one).
+
+    Calendar only: whether that session's bar is final yet is :func:`session_is_open_or_pending`.
+    T-017's pending checks use it to name the session a stored bar must reach."""
+    while not is_trading_day(day):
+        day -= timedelta(days=1)
+    return day

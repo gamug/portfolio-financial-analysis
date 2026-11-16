@@ -1,26 +1,37 @@
 """``/runs`` -- the per-agent run log (``v_analysis_run`` / ``v_pricing_run`` /
-``v_quant_run`` / ``v_cycle_run``), so callers can trace an old run by ``as_of`` +
-``code_version``."""
+``v_quant_run`` / ``v_cycle_run``) plus the orchestrator's provenance (``v_orchestrator_run``,
+T-012), so callers can trace an old run by ``as_of`` + ``code_version``."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
-from portfolio_common.db import Allowlist, Database, DatabaseError
+from portfolio_common.db import Database, DatabaseError
 
 from api.dependencies import Page, get_db, page_params
 from api.models import RunKind, RunRow
 
 router = APIRouter(tags=["runs"])
 
-_VIEW: dict[RunKind, str] = {
-    "analysis": "v_analysis_run",
-    "pricing": "v_pricing_run",
-    "quant": "v_quant_run",
-    "cycle": "v_cycle_run",
+# Static, literal SQL per kind (constitution Code & Git #10): the view name is never built at
+# runtime. The optional ``status`` filter below appends a fixed literal, never an identifier.
+_RUN_SQL: dict[RunKind, str] = {
+    "analysis": (
+        "SELECT run_id, as_of, code_version, status, started_at, finished_at FROM v_analysis_run"
+    ),
+    "pricing": (
+        "SELECT run_id, as_of, code_version, status, started_at, finished_at FROM v_pricing_run"
+    ),
+    "quant": (
+        "SELECT run_id, as_of, code_version, status, started_at, finished_at FROM v_quant_run"
+    ),
+    "cycle": (
+        "SELECT run_id, as_of, code_version, status, started_at, finished_at FROM v_cycle_run"
+    ),
+    "orchestrator": (
+        "SELECT run_id, as_of, code_version, status, started_at, finished_at "
+        "FROM v_orchestrator_run"
+    ),
 }
-# Self-enforcing guarantee that only one of the 4 fixed view names above can ever
-# reach the f-string below, in place of a hand-written S608 justification comment.
-_VIEW_NAMES = Allowlist(*_VIEW.values())
 
 
 @router.get("/runs", response_model=list[RunRow])
@@ -30,11 +41,10 @@ def list_runs(
     page: Page = Depends(page_params),
     db: Database = Depends(get_db),
 ) -> list[RunRow]:
-    kinds = [kind] if kind else list(_VIEW)
+    kinds = [kind] if kind else list(_RUN_SQL)
     out: list[RunRow] = []
     for k in kinds:
-        view = _VIEW_NAMES.check(_VIEW[k])
-        sql = f"SELECT run_id, as_of, code_version, status, started_at, finished_at FROM {view}"  # noqa: S608 - view is Allowlist-checked
+        sql = _RUN_SQL[k]
         params: list[object] = []
         if status:
             sql += " WHERE status = ?"

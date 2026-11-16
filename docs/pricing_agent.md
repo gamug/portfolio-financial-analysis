@@ -7,7 +7,7 @@ per-day `price_observation` analytics).
 
 ```bash
 uv run python -m pricing_agent run [--analysis-date 2021-06-30] [--tickers AAPL,NVDA] \
-    [--start 2022-01-01] [--end DATE] [--by-year] [--store-daily] [--observations] [--fresh] \
+    [--start 2019-01-02] [--end DATE] [--by-year] [--store-daily] [--observations] [--fresh] \
     [--allow-dirty] [--allow-split-jumps]
 uv run python -m pricing_agent migrate
 ```
@@ -18,6 +18,14 @@ it, and any candle dated after it is dropped in `_store` before summarising. It 
 stamped on `pricing_run.as_of` with `pricing_run.code_version`; `price_window` /
 `price_daily` / `price_observation` rows carry the `run_id`. `--refresh-universe`
 is a deprecated no-op.
+
+**The fetch window (T-153 part 3a, D2).** `DEFAULT_START_DATE` is **2019-01-02** — the
+backtest window's first session (2022-01-03) minus `quant`'s 756-day `lookback_days`, the
+longest read of the stored history, one rule for every company. Each asset is fetched from that
+start to `min(resolved_end(), the line's last membership day)`: a company that left the index
+gets nothing dated after its exit, and its `full` window row ends there. The run's universe is
+`kg_schema.queries.members_over_range` — every CIK line that was a member at any time in
+`[2022-01-03, D]`, not only the members on D (see "universe source").
 
 `--observations` requires `--store-daily` (refused at the CLI and again in
 `pipeline.run` itself, T-110): a `price_observation` row is a per-day analytic over a
@@ -151,3 +159,45 @@ expected window labels are present **and** neither `--store-daily` nor
 - Warm-up rows carry NULLs for the rolling fields — confined to early 2022 since
   the collector always fetches from `2022-01-01`.
 - Finnhub free tier has no history, so `source` is almost always `yfinance`.
+
+## `pending` (T-017)
+
+`python -m pricing_agent pending --analysis-date D` is the orchestrator's read-only check (one line,
+`pending: yes|no <evidence>`; gateway GETs only). With S the last NYSE session on or before D it
+says yes when a member has no `price_daily` bar at S and the gateway has any candle for it from the day after its latest stored bar (the start date if none) to S, when a
+bar lacks its `priceobs-v2` observation, when `has_pre_split_rows` holds, or when S is not final
+(the run would refuse it). A member the gateway has no candle for, and one whose latest
+`pricing_run_error` is a `split_jump` refusal, are listed in the evidence and do not count.
+
+## The private Tiingo import (T-153 part 3d)
+
+`pricing_agent import-tiingo` loads the 33 leaver lines the gateway cannot serve from the private
+file `portfolio-data-mining` fetched (`/workspaces/thesis/data/private/tiingo/`, git-ignored and
+never committed; this package never calls Tiingo and needs no key):
+
+```bash
+uv run python -m pricing_agent import-tiingo [--file PATH] [--manifest PATH] [--db ...]
+    [--universe-db ...] [--analysis-date D] [--dry-run]
+```
+
+It refuses, before writing anything, a path inside a git work tree, a file whose sha256 differs
+from the manifest's, a line the manifest does not list, a line whose CIK has no `assets` row (run
+an ingestion step first so the line's identity exists), a row after the line's last membership day
+or after `--analysis-date`, and a SPLIT row the tracked event list does not explain. What it writes
+carries `source = 'tiingo'` per row: `price_daily` (the file's split-adjusted columns) and the
+line's dividends/splits in `corporate_action` under the engine `corpact-tiingo-v1`, the dividend as
+`divCash / split_cum(ex_date)`. A second run on the same file writes nothing.
+
+**One vendor per line, both directions.** A line with any stored non-Tiingo bar is gateway-only:
+the import writes nothing for it and names it with its stored count in its own `pricing_run`
+(`lines_gateway_only`). The reverse -- the gateway later serving a line that holds imported rows --
+is refused at the write path (`pricing_run_error.stage = 'tiingo_stitch'`), and `pending` treats
+that refusal like `split_jump`. There is no `--allow-*` override for either, and no in-place
+deletion command: if Tiingo says no (or a line changes hands), delete the private file and every
+copy, discard the database and rebuild without the import (D9), then `quant` and `cycle` are re-run.
+`kg_schema.queries.tiingo_marked_rows` reports what a database holds (0 in every table on a
+rebuilt one).
+
+`--observations` derives from the asset's whole stored history, so an imported line gets its
+`price_observation` rows through the same path as any other member -- including when the gateway
+serves the ticker nothing at all.

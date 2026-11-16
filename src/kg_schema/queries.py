@@ -8,8 +8,11 @@ Read (``universe.db`` -- point-in-time S&P 500 membership, never written here):
                           from here)
     members_asof          open membership stints as of a date, as UniverseMember rows
     symbols_asof           just the ticker symbols from members_asof
-    resolve_asset_ids      case-insensitive ticker -> assets.id lookup (financial DB,
-                            chunked IN (...), never inserts)
+    members_over_range    every company that was a member at any time in a date window,
+                          one entry per CIK line, with the line's own membership span
+                          (T-153 part 3a)
+    resolve_asset_ids      member (symbol + CIK) -> assets.id lookup, by the CIK's ticker line
+                            as of a date (T-153 part 2; `json_each`, never inserts)
 
 Read (metric versions -- which engine versions of fundamental_metrics are stored):
     metric_versions_present  {metric_group: [engine_version, ...]} actually stored; the
@@ -43,19 +46,37 @@ Business logic that consumes these queries' results
 
 from __future__ import annotations
 
+import contextlib
 import json
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
-from portfolio_common.db import Database, DatabaseError, Row, in_clause
+from portfolio_common.db import Database, DatabaseError, Row
 
+from . import ticker_history
 from .coverage import DEFAULT_MIN_OBSERVATION_DAYS, CoverageReport, SymbolCoverage
 from .db import connect_ro as _kg_connect_ro
+from .ddl import (
+    ALLOWED_CYCLE_TYPES,
+    INVALID_SEC_FILINGS_ACCESSIONS_QUERY,
+    RUN_REFERENCE_MAP,
+    UNMAPPED_RUN_KIND_QUERIES,
+    UNMAPPED_RUN_KIND_SAMPLE_QUERIES,
+    UNRESOLVED_REFERENCE_QUERIES,
+    UNRESOLVED_REFERENCE_SAMPLE_QUERIES,
+    WRONG_CYCLE_TYPE_QUERIES,
+    WRONG_CYCLE_TYPE_SAMPLE_QUERIES,
+)
+from .identity import normalize_cik
 
 SUPPORTED_UNIVERSE = "SP500"
-_ID_CHUNK = 900  # keep under SQLite's bound-parameter limit
+
+#: The backtest window's first session (T-153 part 3a): every ingestion step must cover
+#: every company that was a member at any time from here to the run's analysis date.
+WINDOW_START = "2022-01-03"
 
 VERSION_DDL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -109,11 +130,13 @@ def members_asof(
     *,
     universe: str = SUPPORTED_UNIVERSE,
 ) -> list[UniverseMember]:
-    """Members with an open stint as of *analysis_date* (ISO ``YYYY-MM-DD``).
+    """Members with a stint covering *analysis_date* (ISO ``YYYY-MM-DD``).
 
-    A symbol that left and rejoined has one row per stint; only the stint covering
-    *analysis_date* matches. If the data ever carries overlapping stints for a
-    symbol, the one with the latest ``valid_from`` wins.
+    ``valid_to`` is the last day of membership (the day before the removal takes
+    effect), inclusive; ``NULL`` = still a member. A symbol that left and rejoined
+    has one row per stint; only the stint covering *analysis_date* matches. If the
+    data ever carries overlapping stints for a symbol, the one with the latest
+    ``valid_from`` wins.
     """
     _check_universe(universe)
     rows = universe_db.execute(
@@ -121,7 +144,7 @@ def members_asof(
         SELECT symbol, security, cik, gics_sector, gics_sub_industry,
                hq_location, date_added, founded, valid_from, valid_to
         FROM universe_membership
-        WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to > ?)
+        WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to >= ?)
         ORDER BY symbol, valid_from
         """,
         (analysis_date, analysis_date),
@@ -149,39 +172,161 @@ def symbols_asof(
     *,
     universe: str = SUPPORTED_UNIVERSE,
 ) -> list[str]:
-    """Just the ticker symbols with an open stint as of *analysis_date*, sorted."""
+    """Just the ticker symbols with a stint covering *analysis_date*, sorted."""
     return [m.symbol for m in members_asof(universe_db, analysis_date, universe=universe)]
 
 
-def resolve_asset_ids(
-    financial_db: Database, symbols: Iterable[str]
-) -> tuple[dict[str, int], list[str]]:
-    """Map *symbols* to ``assets.id`` by case-insensitive ticker match.
+@dataclass(frozen=True)
+class WindowMember:
+    """One CIK line that was a member at some point in a date window (T-153 part 3a).
 
-    Pure read -- never inserts. Returns ``(mapping, missing)`` where *missing*
-    lists the input symbols with no ``assets`` row yet (they need an agent run to
-    create their identity first).
+    *member* is the line's representative stint -- the latest one inside the window, its
+    ``symbol`` the line's canonical (part 2) -- so ``sync_universe`` stores it like any
+    member. ``window_from``/``window_to`` are the line's own membership span inside the
+    window (``window_to is None`` = still a member), the bound every ingestion step
+    fetches to: nothing filed or traded after ``window_to`` is fetched for the line.
     """
-    wanted: list[str] = []
+
+    member: UniverseMember
+    window_from: str
+    window_to: str | None
+    stints: int
+
+
+def members_over_range(
+    universe_db: Database,
+    fin_db: Database,
+    start: str,
+    end: str,
+    *,
+    universe: str = SUPPORTED_UNIVERSE,
+) -> list[WindowMember]:
+    """Every company that was a member at any time in ``[start, end]`` (T-153 part 3a).
+
+    One entry per **CIK line** (part 2, APP-10a): a company's several stints collapse to one
+    line (CDAY then DAY is one asset), while coexisting share classes stay separate lines
+    (DISCA continues as WBD and is one line; DISCK is another). *fin_db* is read for the
+    tracked ticker history (``ticker_history``), which names each line's canonical symbol;
+    ``universe_db`` is read strictly as membership, never as identity.
+
+    ``window_from`` is clamped to *start* and ``window_to`` is ``None`` for a line still a
+    member at *end* -- the caller bounds its fetch by the line's own span, so a company that
+    left gets nothing dated after its exit. **Membership bounds the selection, not the fetch:**
+    a caller may fetch past the exit when what it reads is dated by a stored bar rather than the
+    membership (``quant backfill-actions`` fetches each line's actions to its last stored
+    ``price_daily`` bar, because ``kg_schema.market_cap`` applies a split up to that bar).
+    Sorted by canonical symbol."""
+    _check_universe(universe)
+    rows = universe_db.execute(
+        """
+        SELECT symbol, security, cik, gics_sector, gics_sub_industry,
+               hq_location, date_added, founded, valid_from, valid_to
+        FROM universe_membership
+        WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to >= ?)
+        ORDER BY symbol, valid_from
+        """,
+        (end, start),
+    ).fetchall()
+
+    grouped: dict[tuple[str, str], list[UniverseMember]] = {}
+    order: list[tuple[str, str]] = []
+    for r in rows:
+        stint = UniverseMember(
+            symbol=str(r["symbol"]),
+            security=str(r["security"]),
+            cik=r["cik"],
+            gics_sector=r["gics_sector"],
+            gics_sub_industry=r["gics_sub_industry"],
+            hq_location=r["hq_location"],
+            date_added=r["date_added"],
+            founded=r["founded"],
+            valid_from=str(r["valid_from"]),
+            valid_to=r["valid_to"],
+        )
+        canonical = ticker_history.canonical_for_member(fin_db, symbol=stint.symbol, cik=stint.cik)
+        own = normalize_cik(stint.cik)
+        # A CIK's line is keyed by (CIK, canonical); a member with no CIK is its own line.
+        key = (own, canonical.upper()) if own is not None else ("", canonical.upper())
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(stint)
+
+    out: list[WindowMember] = []
+    for key in order:
+        stints = grouped[key]
+        representative = max(stints, key=lambda s: (s.valid_from, s.symbol))
+        canonical = ticker_history.canonical_for_member(
+            fin_db, symbol=representative.symbol, cik=representative.cik
+        )
+        if canonical != representative.symbol:
+            representative = replace(representative, symbol=canonical)
+        window_from = max(min(s.valid_from for s in stints), start)
+        window_to = (
+            None
+            if any(s.valid_to is None for s in stints)
+            else max(s.valid_to for s in stints if s.valid_to is not None)
+        )
+        out.append(WindowMember(representative, window_from, window_to, len(stints)))
+    return sorted(out, key=lambda w: w.member.symbol)
+
+
+def resolve_asset_ids(
+    db: Database,
+    members: Iterable[tuple[str, str | None]],
+    *,
+    as_of: str,
+) -> tuple[dict[str, int], list[str]]:
+    """Map members to ``assets.id`` by CIK, as of a date (T-153 part 2).
+
+    *members* is an iterable of ``(symbol, cik)`` pairs. A member whose CIK has a recorded
+    ticker line (``ticker_history``, APP-10a) is matched by the line's **canonical** symbol, so a
+    rename (FB -> META) resolves to the one asset the whole line shares. A matched asset whose
+    stored CIK differs from the member's is **missing**, never merged -- a ticker is reassigned
+    (the symbol ``FB`` is ProShares Trust, CIK 0001174610, today). A member with no CIK falls
+    back to the line named by *as_of* (else the symbol itself) and a case-insensitive bare
+    ticker match, as before.
+
+    Pure read -- never inserts. Returns ``(mapping, missing)`` keyed by the input symbol
+    (upper-cased); *missing* lists the input symbols with no matching ``assets`` row (they need
+    an agent run to create their identity first).
+    """
+    wanted: list[tuple[str, str | None]] = []
     seen: set[str] = set()
-    for s in symbols:
-        key = s.upper()
+    for symbol, cik in members:
+        key = symbol.upper()
         if key not in seen:
             seen.add(key)
-            wanted.append(key)
+            wanted.append((key, cik))
 
-    mapping: dict[str, int] = {}
-    for start in range(0, len(wanted), _ID_CHUNK):
-        chunk = wanted[start : start + _ID_CHUNK]
-        placeholders = in_clause(chunk)
-        rows = financial_db.execute(
-            f"SELECT id, ticker FROM assets WHERE UPPER(ticker) IN {placeholders}",  # noqa: S608
-            chunk,
+    canonical = {
+        key: ticker_history.canonical_for_member(db, symbol=key, cik=cik, as_of=as_of)
+        for key, cik in wanted
+    }
+    tickers = sorted({canonical[key] for key, _ in wanted})
+
+    by_ticker: dict[str, int] = {}
+    cik_by_id: dict[int, str | None] = {}
+    if tickers:
+        rows = db.execute(
+            "SELECT id, ticker, cik FROM assets "
+            "WHERE UPPER(ticker) IN (SELECT value FROM json_each(?))",
+            (json.dumps(tickers),),
         )
         for r in rows:
-            mapping[str(r["ticker"]).upper()] = int(r["id"])
+            by_ticker[str(r["ticker"]).upper()] = int(r["id"])
+            cik_by_id[int(r["id"])] = r["cik"]
 
-    missing = [s for s in wanted if s not in mapping]
+    mapping: dict[str, int] = {}
+    missing: list[str] = []
+    for key, cik in wanted:
+        asset_id = by_ticker.get(canonical[key].upper())
+        member_cik = normalize_cik(cik)
+        stored_cik = normalize_cik(cik_by_id.get(asset_id)) if asset_id is not None else None
+        if asset_id is None or (member_cik is not None and stored_cik not in (None, member_cik)):
+            missing.append(key)
+            continue
+        mapping[key] = asset_id
     return mapping, missing
 
 
@@ -193,7 +338,7 @@ def cover_share_rows(db: Database, asset_ids: list[int], as_of: str) -> list[Row
     count's own ``as_of_date`` are both on or before it (T-107, no lookahead). Empty when the
     table does not exist yet (a database no ingest has touched)."""
     try:
-        return db.execute(
+        rows = db.execute(
             """
             SELECT sf.asset_id, a.cik, sf.id AS filing_id, sf.available_at,
                    c.class_member, c.value, c.as_of_date
@@ -207,14 +352,56 @@ def cover_share_rows(db: Database, asset_ids: list[int], as_of: str) -> list[Row
         ).fetchall()
     except DatabaseError:
         return []
+    with contextlib.suppress(DatabaseError):
+        # Audit F-A12 (MKT-01): the cover count of the company's last filing **before** its first
+        # stored one, from the SEC's own dei fact (filed on or before *as_of* -- no lookahead). A
+        # negative id, so it never collides with a stored filing.
+        rows += db.execute(
+            """
+            SELECT p.asset_id, a.cik, -p.id AS filing_id, p.available_at,
+                   '' AS class_member, p.value, p.as_of_date
+            FROM audit_prior_cover_shares p JOIN assets a ON a.id = p.asset_id
+            WHERE p.asset_id IN (SELECT value FROM json_each(?))
+              AND p.available_at <= ? AND p.as_of_date <= ?
+            """,
+            (json.dumps(sorted(set(asset_ids))), as_of, as_of),
+        ).fetchall()
+    return rows
+
+
+def cover_class_rates(db: Database, filing_ids: Iterable[int]) -> dict[int, dict[str, float]]:
+    """L-43 (MKT-03, reviewer A 2026-10-29): per stored filing, the rate at which each unlisted class converts into
+    the traded class as that filing itself prints it, from ``cover_class_conversion`` (keyed by accession; the
+    citing accession and text are recorded there). Empty when the table does not exist (a database no audit wrote)."""
+    ids = sorted({int(i) for i in filing_ids if int(i) > 0})
+    if not ids:
+        return {}
+    try:
+        rows = db.execute(
+            """
+            SELECT sf.id AS filing_id, r.class_member, r.rate
+            FROM cover_class_conversion r JOIN sec_filings sf ON sf.accession_number = r.accession
+            WHERE sf.id IN (SELECT value FROM json_each(?))
+            """,
+            (json.dumps(ids),),
+        ).fetchall()
+    except DatabaseError:
+        return {}
+    out: dict[int, dict[str, float]] = {}
+    for r in rows:
+        out.setdefault(int(r["filing_id"]), {})[str(r["class_member"])] = float(r["rate"])
+    return out
 
 
 def last_closes(db: Database, asset_ids: list[int], *, as_of: str, floor: str) -> list[Row]:
-    """Each asset's last stored close on or before *as_of* and on or after *floor*."""
+    """Each asset's last stored close on or before *as_of* and on or after *floor*.
+
+    Carries the bar's ``source``, so a reader can tell a gateway close from the private Tiingo
+    import's (T-153 part 3d, A3)."""
     try:
         return db.execute(
             """
-            SELECT p.asset_id, p.date, p.close
+            SELECT p.asset_id, p.date, p.close, p.source
             FROM price_daily p
             JOIN (
                 SELECT asset_id, MAX(date) AS d FROM price_daily
@@ -227,6 +414,50 @@ def last_closes(db: Database, asset_ids: list[int], *, as_of: str, floor: str) -
         ).fetchall()
     except DatabaseError:
         return []
+
+
+#: The tables the private import marks, and the statement that counts one of them. A static
+#: dict of literal SQL: no identifier is ever interpolated (constitution Code & Git #10).
+TIINGO_MARKED_SQL: dict[str, str] = {
+    "price_daily": "SELECT COUNT(*) AS n FROM price_daily WHERE source = 'tiingo'",
+    "price_observation": "SELECT COUNT(*) AS n FROM price_observation WHERE source = 'tiingo'",
+    "quant_return_daily": "SELECT COUNT(*) AS n FROM quant_return_daily WHERE vendor = 'tiingo'",
+    "corporate_action": "SELECT COUNT(*) AS n FROM corporate_action WHERE source = 'tiingo'",
+}
+
+
+def tiingo_marked_rows(db: Database) -> dict[str, int]:
+    """How many rows of each marked table the private import wrote (T-153 part 3d, D9/R6).
+
+    Rule 5 says the file and every row built from it are deleted, and D9's procedure is to discard
+    the database and rebuild without the import -- so this is the *check* that a database holds
+    none of them (0 in every table), not a postcondition of a deletion command. A table that does
+    not exist yet counts 0."""
+    out: dict[str, int] = {}
+    for name, sql in TIINGO_MARKED_SQL.items():
+        try:
+            row = db.execute(sql).fetchone()
+        except DatabaseError:  # a partial database
+            out[name] = 0
+            continue
+        out[name] = int(row["n"]) if row is not None else 0
+    return out
+
+
+def tiingo_asset_ids(db: Database) -> list[int]:
+    """The assets whose prices came from the private Tiingo import (T-153 part 3d, D8).
+
+    The one way to name the imported lines on a database: rule 2's own per-line marker, the
+    ``source`` of the line's stored bars. T-100 reports every evaluation result twice around
+    this list, and ``verify_pilot``'s T-153f check reads it. Empty when nothing was imported
+    (or when the table does not exist yet -- a fresh database)."""
+    try:
+        rows = db.execute(
+            "SELECT DISTINCT asset_id FROM price_daily WHERE source = 'tiingo' ORDER BY asset_id"
+        ).fetchall()
+    except DatabaseError:
+        return []
+    return [int(r["asset_id"]) for r in rows]
 
 
 def last_price_dates(db: Database, asset_ids: list[int]) -> dict[int, str]:
@@ -244,18 +475,27 @@ def last_price_dates(db: Database, asset_ids: list[int]) -> dict[int, str]:
 
 def split_rows(db: Database, asset_ids: list[int], *, engine_version: str) -> list[Row]:
     """The recorded splits (ex-date, ratio) of one corporate-action engine build."""
+    return split_rows_from(db, asset_ids, engine_versions=(engine_version,))
+
+
+def split_rows_from(
+    db: Database, asset_ids: list[int], *, engine_versions: Sequence[str]
+) -> list[Row]:
+    """The recorded splits of one or more engine builds, with the issuer's CIK (T-153 part 3d).
+
+    The CIK is what the tracked event list keys an event by (a CIK's two share classes share one
+    event); a database whose ``assets`` table has no row for the asset reports a blank CIK, and
+    the row is then unclassifiable -- refused, never guessed. Only placeholders are interpolated
+    (one per engine), never an identifier (constitution Code & Git #10)."""
+    engines = tuple(dict.fromkeys(engine_versions))
+    if not engines:
+        return []
+    marks = ", ".join("?" for _ in engines)
+    sql = f"SELECT DISTINCT c.asset_id, c.ex_date, c.value, a.cik FROM corporate_action c JOIN assets a ON a.id = c.asset_id WHERE c.asset_id IN (SELECT value FROM json_each(?)) AND c.action_type = 'SPLIT' AND c.engine_version IN ({marks}) ORDER BY c.asset_id, c.ex_date"  # noqa: S608
     try:
-        return db.execute(
-            "SELECT DISTINCT asset_id, ex_date, value FROM corporate_action "
-            "WHERE asset_id IN (SELECT value FROM json_each(?)) "
-            "AND action_type = 'SPLIT' AND engine_version = ? ORDER BY asset_id, ex_date",
-            (json.dumps(sorted(set(asset_ids))), engine_version),
-        ).fetchall()
+        return db.execute(sql, (json.dumps(sorted(set(asset_ids))), *engines)).fetchall()
     except DatabaseError:
         return []
-
-
-# -- data-coverage report -----------------------------------------------------
 
 
 def metric_versions_present(conn: Database) -> dict[str, list[str]]:
@@ -475,6 +715,48 @@ def veto_out_of_order_reason(conn: Database, cycle_date: str) -> str | None:
     return f"cycle_date {cycle_date} is older than the latest veto transition ({latest})"
 
 
+class UnknownRiskModel(RuntimeError):
+    """``quant_risk_model`` holds no usable row for the id a caller asked about (the backtest's
+    ``cycle`` selection, WP-C): a wrong id, a model built before the panel spec was recorded, or
+    a spec that disagrees with the model's own ``n_assets``."""
+
+
+def risk_model_asset_ids(conn: Database, model_id: int) -> set[int]:
+    """The assets ``quant`` risk model *model_id* covers -- the universe its Σ was estimated on.
+
+    **``panel_spec_json.asset_ids`` is authoritative, not ``quant_covariance``.** The panel is the
+    exact id vector the model was built on: ``quant.persist`` writes it unconditionally, it is what
+    ``quant_risk_model.n_assets`` counts, and every stored matrix column is drawn from it.
+    ``quant_covariance`` is a *cache of the output*, not the contract: it is written only when the
+    build asked to store the matrix, and it holds the **lower triangle only**
+    (``asset_id_i <= asset_id_j``, per the DDL), so reading it would have to union ``i`` and ``j``
+    and would still report "no assets" for a model whose matrix was not stored. A spec whose
+    distinct ids disagree with the model's recorded ``n_assets`` is refused instead of half-read.
+    """
+    row = conn.execute(
+        "SELECT n_assets, panel_spec_json FROM quant_risk_model WHERE id = ?", (model_id,)
+    ).fetchone()
+    if row is None:
+        raise UnknownRiskModel(f"no quant_risk_model with id {model_id}")
+    try:
+        spec = json.loads(row["panel_spec_json"] or "{}")
+    except (TypeError, ValueError):
+        spec = {}
+    ids = spec.get("asset_ids") if isinstance(spec, dict) else None
+    if not isinstance(ids, list) or not ids:
+        raise UnknownRiskModel(
+            f"quant_risk_model {model_id} records no panel asset_ids in its panel_spec_json"
+        )
+    asset_ids = {int(a) for a in ids}
+    n_assets = int(row["n_assets"])
+    if len(asset_ids) != n_assets:
+        raise UnknownRiskModel(
+            f"quant_risk_model {model_id} records n_assets = {n_assets} but "
+            f"{len(asset_ids)} distinct asset_ids in its panel spec"
+        )
+    return asset_ids
+
+
 def check_coverage(
     fin_db: Database,
     universe_db: Database,
@@ -484,8 +766,11 @@ def check_coverage(
     min_observation_days: int = DEFAULT_MIN_OBSERVATION_DAYS,
 ) -> CoverageReport:
     """Per-member core-data coverage for *universe* as of *as_of*."""
-    symbols = symbols_asof(universe_db, as_of, universe=universe)
-    id_by_symbol, _missing = resolve_asset_ids(fin_db, symbols)
+    members = members_asof(universe_db, as_of, universe=universe)
+    symbols = [m.symbol for m in members]
+    id_by_symbol, _missing = resolve_asset_ids(
+        fin_db, [(m.symbol, m.cik) for m in members], as_of=as_of
+    )
 
     fundamental_ids = _distinct_ids(
         fin_db,
@@ -622,6 +907,9 @@ def reconcile(  # noqa: PLR0913 - keyword-only provenance fields, all with defau
 
     Returns ``(opened, closed)`` counts. *as_of* is the effective date for both
     ``valid_from`` on new rows and ``valid_to`` on closed ones (ISO date string).
+    The frozen local table keeps the old exclusive ``valid_to`` (the effective date
+    of the removal); ``members_asof`` reads ``universe.db``, never this table. If
+    this writer is ever revived it must write the day before the removal.
     """
     open_rows = db.execute(
         "SELECT asset_id FROM universe_membership WHERE universe = ? AND valid_to IS NULL",
@@ -654,20 +942,143 @@ def reconcile(  # noqa: PLR0913 - keyword-only provenance fields, all with defau
     return len(appeared), len(vanished)
 
 
+def unresolved_run_references(db: Database) -> list[dict[str, Any]]:
+    """Find any non-null run/filing ID referencing a target table that does not exist,
+    references with wrong cycle_type, or rows with an unmapped run_kind.
+
+    Returns an empty list when all references resolve correctly.
+    """
+    violations: list[dict[str, Any]] = []
+
+    # 1. Missing targets
+    for (table, col, run_kind), target in RUN_REFERENCE_MAP.items():
+        if not db.relation_exists(table) or not db.relation_exists(target):
+            continue
+        cnt_row = db.execute(UNRESOLVED_REFERENCE_QUERIES[(table, col, run_kind)]).fetchone()
+        cnt = int(cnt_row[0]) if cnt_row and cnt_row[0] is not None else 0
+        if cnt == 0:
+            continue
+        max_id = int(cnt_row[1]) if cnt_row and cnt_row[1] is not None else 0
+        sample_rows = db.execute(
+            UNRESOLVED_REFERENCE_SAMPLE_QUERIES[(table, col, run_kind)]
+        ).fetchall()
+        sample_ids = [int(r[0]) for r in sample_rows]
+        violations.append(
+            {
+                "table": table,
+                "column": col,
+                "run_kind": run_kind,
+                "target": target,
+                "target_table": target,
+                "reason": "missing",
+                "unresolved_count": cnt,
+                "max_unresolved_id": max_id,
+                "sample_ids": sample_ids,
+            }
+        )
+
+    # 2. Wrong cycle_type targets
+    for (table, col, run_kind), allowed_types in ALLOWED_CYCLE_TYPES.items():
+        if not db.relation_exists(table) or not db.relation_exists("cycle_run"):
+            continue
+        cnt_row = db.execute(WRONG_CYCLE_TYPE_QUERIES[(table, col, run_kind)]).fetchone()
+        cnt = int(cnt_row[0]) if cnt_row and cnt_row[0] is not None else 0
+        if cnt == 0:
+            continue
+        max_id = int(cnt_row[1]) if cnt_row and cnt_row[1] is not None else 0
+        sample_rows = db.execute(WRONG_CYCLE_TYPE_SAMPLE_QUERIES[(table, col, run_kind)]).fetchall()
+        sample_ids = [int(r[0]) for r in sample_rows]
+        found_types = sorted(set(str(r[1]) for r in sample_rows))
+        violations.append(
+            {
+                "table": table,
+                "column": col,
+                "run_kind": run_kind,
+                "target": "cycle_run",
+                "target_table": "cycle_run",
+                "reason": "wrong_cycle_type",
+                "cycle_type": ", ".join(found_types),
+                "expected_types": list(allowed_types),
+                "unresolved_count": cnt,
+                "max_unresolved_id": max_id,
+                "sample_ids": sample_ids,
+            }
+        )
+
+    # 3. Unmapped run_kind rows
+    for table in UNMAPPED_RUN_KIND_QUERIES:
+        if not db.relation_exists(table):
+            continue
+        cnt_row = db.execute(UNMAPPED_RUN_KIND_QUERIES[table]).fetchone()
+        cnt = int(cnt_row[0]) if cnt_row and cnt_row[0] is not None else 0
+        if cnt == 0:
+            continue
+        max_id = int(cnt_row[1]) if cnt_row and cnt_row[1] is not None else 0
+        sample_rows = db.execute(UNMAPPED_RUN_KIND_SAMPLE_QUERIES[table]).fetchall()
+        sample_ids = [int(r[0]) for r in sample_rows]
+        found_kinds = sorted(set(str(r[1]) for r in sample_rows))
+        violations.append(
+            {
+                "table": table,
+                "column": "run_id",
+                "run_kind": ", ".join(found_kinds),
+                "target": "unknown",
+                "target_table": "unknown",
+                "reason": "unmapped_run_kind",
+                "unresolved_count": cnt,
+                "max_unresolved_id": max_id,
+                "sample_ids": sample_ids,
+            }
+        )
+
+    return violations
+
+
+def invalid_sec_filings_accessions(db: Database) -> list[dict[str, Any]]:
+    """Find any sec_filings rows with invalid accession format or duplicate accession per asset.
+
+    Routes through :data:`kg_schema.ddl.INVALID_SEC_FILINGS_ACCESSIONS_QUERY`.
+    Returns an empty list when all accessions are valid and unique per asset.
+    """
+    if not db.relation_exists("sec_filings"):
+        return []
+    rows = db.execute(INVALID_SEC_FILINGS_ACCESSIONS_QUERY).fetchall()
+    return [
+        {
+            "id": r[0],
+            "asset_id": r[1],
+            "form": r[2],
+            "fiscal_year": r[3],
+            "fiscal_period": r[4],
+            "filing_date": r[5],
+            "accession_number": r[6],
+            "issue": r[7],
+        }
+        for r in rows
+    ]
+
+
 __all__ = [
     "SUPPORTED_UNIVERSE",
+    "WINDOW_START",
     "StaleAsOf",
     "UniverseMember",
+    "UnknownRiskModel",
+    "WindowMember",
     "check_coverage",
     "connect_ro",
     "current_version",
     "ensure",
+    "invalid_sec_filings_accessions",
     "last_price_date",
     "members_asof",
+    "members_over_range",
     "persist_coverage",
     "reconcile",
     "record",
     "resolve_asset_ids",
+    "risk_model_asset_ids",
     "stale_as_of_reason",
     "symbols_asof",
+    "unresolved_run_references",
 ]

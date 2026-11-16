@@ -1,12 +1,17 @@
-"""Statement parsing and line-item resolution against real EDGAR captures."""
-
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
 
-from fundamental_agent.statements import INSTANT, Period, Statements, _parse_period, iter_facts
+from fundamental_agent.statements import (
+    INSTANT,
+    REGISTRY,
+    Period,
+    Statements,
+    _parse_period,
+    iter_facts,
+)
 
 
 def _tag(column: str) -> str | None:
@@ -613,13 +618,15 @@ def test_revenue_total_label_correction_refuses_to_guess_when_between_rows_are_t
     assert stmts.get("revenue", key) is None
 
 
-def test_net_income_resolves_the_available_to_common_variant_when_no_plain_tag_exists() -> None:
-    """T-096 (docs/model_fixes.md): WAT's real shape -- 14 of 18 `metrics-v2` filings in
-    the 20-ticker sample tag no `us-gaap_NetIncomeLoss`/`us-gaap_ProfitLoss` row at all,
-    only `us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic` (WAT's Oct-2022 10-Q,
-    real value). Left unresolved, `net_income` silently comes back `None` -- and, chained
-    through F4's `ttm_flows` (`db.ttm_flows`/`_recorded_flow`), poisons every later
-    quarter's trailing-twelve-month window that needs this quarter's own value."""
+def test_the_available_to_common_line_is_the_parent_net_income_without_a_preferred_dividend() -> (
+    None
+):
+    """ID-03 / N13, decided by T-159a: WAT's real shape -- 14 of 18 `metrics-v2` filings in the
+    20-ticker sample tag no `us-gaap_NetIncomeLoss` / `us-gaap_ProfitLoss` row, only
+    `us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic` (WAT's Oct-2022 10-Q, real value).
+    That line is after the preferred dividends, so it is the parent's net income **only** when no
+    preferred dividend is filed for the period: then the item is that value, flagged
+    `net_income_to_common`."""
     key = "2022-10-01 (Q4)"
     stmts = Statements.from_payload(
         _revenue_payload(
@@ -631,14 +638,42 @@ def test_net_income_resolves_the_available_to_common_variant_when_no_plain_tag_e
         )
     )
 
-    assert stmts.get("net_income", key) == 155_998_000.0
+    resolution = stmts.resolve("net_income", key)
+    assert resolution.value == 155_998_000.0
+    assert resolution.concept == "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic"
+    assert resolution.how == "substitute"
+    assert "net_income_to_common" in resolution.flags
+    assert "net_income_not_filed" not in resolution.flags
+
+
+def test_the_available_to_common_line_is_refused_when_a_preferred_dividend_is_filed() -> None:
+    """N13: with a preferred dividend filed for the period, the "available to common" line is
+    after it and is not the parent's earnings -- the item stays empty (N13)."""
+    key = "2022-10-01 (Q4)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row(
+                "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic",
+                "Net income",
+                **{key: 155_998_000.0},
+            ),
+            _income_row(
+                "us-gaap_PreferredStockDividendsAndOtherAdjustments",
+                "Preferred stock dividends",
+                **{key: 3_000_000.0},
+            ),
+        )
+    )
+
+    resolution = stmts.resolve("net_income", key)
+    assert resolution.value is None
+    assert "net_income_to_common_refused_preferred_dividends" in resolution.flags
+    assert "net_income_not_filed" in resolution.flags
 
 
 def test_net_income_still_prefers_the_plain_tag_when_both_are_present() -> None:
-    """The `AvailableToCommonStockholdersBasic` fallback must not disturb the ordinary
-    case (`us-gaap_NetIncomeLoss` present) -- a defensive regression guard; live
-    verification (WAT) found the two never co-occur non-dimensionally in the same
-    filing, but this pins the intended behavior if they ever did."""
+    """`NetIncomeLoss` beats the `AvailableToCommonStockholdersBasic` line when a filer
+    files both (ID-03): the latter is after preferred dividends."""
     key = "2023-12-31 (FY)"
     stmts = Statements.from_payload(
         _revenue_payload(
@@ -664,8 +699,12 @@ def test_non_revenue_multi_concept_item_keeps_first_match_only() -> None:
     stmts = Statements.from_payload(
         {
             "income_statement": [
-                _income_row("us-gaap_CostOfGoodsSold", "Cost of goods sold", **{key: 100.0}),
-                _income_row("us-gaap_CostOfServices", "Cost of services", **{key: 50.0}),
+                _income_row(
+                    "us-gaap_CostOfGoodsAndServicesSold",
+                    "Cost of goods and services sold",
+                    **{key: 100.0},
+                ),
+                _income_row("us-gaap_CostOfRevenue", "Cost of revenue", **{key: 50.0}),
             ],
             "balance_sheet": [],
             "cash_flow": [],
@@ -722,3 +761,284 @@ def test_the_utility_total_is_still_checked_against_a_named_component() -> None:
         )
     )
     assert stmts.get("revenue", key) == 1_000.0
+
+
+# Pinned nonnegative concepts per line item (ID-13 to ID-15), derived from DQC_0015
+# (releases 1-7) and DQC_0014 (revenue concepts). Pinned hermetically so CI does not
+# depend on git-excluded CSV files under docs/checklist_sec/sec documentation/.
+# Authoritative check against the DQC element lists is in `scripts/verify_t148b.py dqc`.
+EXPECTED_NONNEGATIVE_CONCEPTS: dict[str, set[str]] = {
+    "revenue": {  # DQC_0014
+        "us-gaap_OperatingLeaseLeaseIncome",
+        "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+        "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
+    },
+    "cogs": {  # DQC_0015
+        "us-gaap_CostOfGoodsAndServicesSold",
+        "us-gaap_CostOfRevenue",
+        # T-159a: the substitute the resolver now reads (the DQC_0015 list names it).
+        "us-gaap_CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",
+    },
+    "interest_expense": {  # DQC_0015
+        "us-gaap_InterestAndDebtExpense",
+        "us-gaap_InterestExpenseDebt",
+        # T-159a: the substitute the resolver now reads (the DQC_0015 list names it).
+        "us-gaap_InterestExpenseBorrowings",
+    },
+    "depreciation_amortization": {  # DQC_0015
+        "us-gaap_DepreciationAndAmortization",
+        "us-gaap_DepreciationDepletionAndAmortization",
+    },
+    "capital_expenditure": {  # DQC_0015
+        "us-gaap_PaymentsForCapitalImprovements",
+        "us-gaap_PaymentsToAcquireFurnitureAndFixtures",
+        "us-gaap_PaymentsToAcquireMachineryAndEquipment",
+        "us-gaap_PaymentsToAcquireOilAndGasEquipment",
+        "us-gaap_PaymentsToAcquireOilAndGasPropertyAndEquipment",
+        "us-gaap_PaymentsToAcquireOtherProductiveAssets",
+        "us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment",
+        "us-gaap_PaymentsToAcquireProductiveAssets",
+        "us-gaap_PaymentsToAcquirePropertyPlantAndEquipment",
+        "us-gaap_PaymentsToAcquireRealEstate",
+        "us-gaap_PaymentsToAcquireRealEstateHeldForInvestment",
+        "us-gaap_PaymentsToDevelopRealEstateAssets",
+        "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties",
+    },
+    "shares_outstanding": {  # DQC_0015
+        "us-gaap_CommonStockSharesOutstanding",
+    },
+    "diluted_shares": {  # DQC_0015
+        "us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding",
+    },
+    "total_assets": {  # DQC_0015
+        "us-gaap_Assets",
+    },
+    "current_assets": {  # DQC_0015
+        "us-gaap_AssetsCurrent",
+    },
+    "total_liabilities": {  # DQC_0015
+        "us-gaap_Liabilities",
+    },
+    "current_liabilities": {  # DQC_0015
+        "us-gaap_LiabilitiesCurrent",
+    },
+    "cash": {  # DQC_0015
+        "us-gaap_CashAndCashEquivalentsAtCarryingValue",
+        "us-gaap_CashAndDueFromBanks",
+        "us-gaap_CashCashEquivalentsAndShortTermInvestments",
+        # T-159a: the bare ``Cash`` line the substitute reads (the DQC_0015 list names it).
+        "us-gaap_Cash",
+    },
+    "short_term_investments": {  # DQC_0015
+        "us-gaap_MarketableSecuritiesCurrent",
+        "us-gaap_ShortTermInvestments",
+        # T-159a: the ASC 320 classes the resolver now reads (the DQC_0015 list names them).
+        "us-gaap_AvailableForSaleSecuritiesDebtSecuritiesCurrent",
+        "us-gaap_DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",
+        "us-gaap_HeldToMaturitySecuritiesCurrent",
+        "us-gaap_OtherShortTermInvestments",
+        "us-gaap_TradingSecurities",
+        "us-gaap_TradingSecuritiesDebt",
+        "us-gaap_TradingSecuritiesEquity",
+    },
+    "inventory": {  # DQC_0015
+        "us-gaap_InventoryNet",
+        # T-159a: the totals the resolver now reads (the DQC_0015 list names them).
+        "us-gaap_InventoryNetOfAllowancesCustomerAdvancesAndProgressBillings",
+        "us-gaap_RetailRelatedInventoryMerchandise",
+    },
+    "receivables": {  # DQC_0015
+        "us-gaap_AccountsReceivableNetCurrent",
+        "us-gaap_ReceivablesNetCurrent",
+        # T-159a: the totals the resolver now reads (the DQC_0015 list names them).
+        "us-gaap_AccountsNotesAndLoansReceivableNetCurrent",
+        "us-gaap_AccountsAndOtherReceivablesNetCurrent",
+        "us-gaap_AccountsReceivableNet",
+    },
+    "long_term_debt": {  # DQC_0015
+        "us-gaap_LongTermDebt",
+        "us-gaap_LongTermDebtAndCapitalLeaseObligations",
+        "us-gaap_LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
+        "us-gaap_LongTermDebtNoncurrent",
+        # T-159a: the debt components the sourced sum now reads (the DQC_0015 list names them).
+        "us-gaap_SeniorNotes",
+        "us-gaap_ConvertibleLongTermNotesPayable",
+        "us-gaap_LongTermNotesPayable",
+        "us-gaap_OtherLongTermDebtNoncurrent",
+        "us-gaap_SeniorLongTermNotes",
+        "us-gaap_MediumtermNotesNoncurrent",
+        "us-gaap_JuniorSubordinatedLongTermNotes",
+        "us-gaap_NotesPayableToBankNoncurrent",
+        "us-gaap_OtherLongTermNotesPayable",
+    },
+    "short_term_debt": {  # DQC_0015
+        "us-gaap_CommercialPaper",
+        "us-gaap_DebtCurrent",
+        "us-gaap_LongTermDebtCurrent",
+        "us-gaap_NotesPayableCurrent",
+        "us-gaap_OtherLongTermDebtCurrent",
+        "us-gaap_ShortTermBorrowings",
+        # T-159a: the current maturities filed as the combined debt-and-lease element (rule 1) and
+        # the calculation children the map now reads (rules 2 and 3) -- the DQC_0015 list names them.
+        "us-gaap_LongTermDebtAndCapitalLeaseObligationsCurrent",
+        "us-gaap_BankOverdrafts",
+        "us-gaap_BridgeLoan",
+        "us-gaap_ConstructionLoan",
+        "us-gaap_ConvertibleDebtCurrent",
+        "us-gaap_ConvertibleNotesPayableCurrent",
+        "us-gaap_ConvertibleSubordinatedDebtCurrent",
+        "us-gaap_LinesOfCreditCurrent",
+        "us-gaap_LoansPayableCurrent",
+        "us-gaap_LongTermCommercialPaperCurrent",
+        "us-gaap_LongTermConstructionLoanCurrent",
+        "us-gaap_LongtermPollutionControlBondCurrent",
+        "us-gaap_LongtermTransitionBondCurrent",
+        "us-gaap_NotesAndLoansPayableCurrent",
+        "us-gaap_OtherNotesPayableCurrent",
+        "us-gaap_OtherShortTermBorrowings",
+        "us-gaap_SecuredDebtCurrent",
+        "us-gaap_SeniorNotesCurrent",
+        "us-gaap_ShortTermBankLoansAndNotesPayable",
+        "us-gaap_ShortTermNonBankLoansAndNotesPayable",
+        "us-gaap_SpecialAssessmentBondCurrent",
+        "us-gaap_SubordinatedDebtCurrent",
+        "us-gaap_UnsecuredDebtCurrent",
+        "us-gaap_WarehouseAgreementBorrowings",
+    },
+}
+
+
+def test_registry_nonnegatives_match_dqc_lists() -> None:
+    """ID-13 to ID-15: nonnegative concepts in REGISTRY match pinned DQC_0015/DQC_0014 sets."""
+    for item_name, item in REGISTRY.items():
+        expected = EXPECTED_NONNEGATIVE_CONCEPTS.get(item_name, set())
+        assert set(item.nonnegative) == expected, f"{item_name}: {item.nonnegative} != {expected}"
+
+
+def test_equals_dimensional_member_flag_raised_when_value_matches_dimensional_row() -> None:
+    """ID-16 / ID-09: when resolved non-dimensional value equals a dimensional row
+    of the same concept on an axis outside _WHOLE_ENTITY_AXES -> flag equals_dimensional_member."""
+    key = "2023-12-31 (FY)"
+    # Revenue match
+    payload_rev = {
+        "income_statement": [
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Revenues",
+                **{key: 500.0},
+            ),
+            _slice_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Product slice",
+                "us-gaap:ProductOrServiceAxis",
+                "us-gaap:ProductMember",
+                **{key: 500.0},
+            ),
+        ],
+        "balance_sheet": [],
+        "cash_flow": [],
+    }
+    stmts_rev = Statements.from_payload(payload_rev)
+    res_rev = stmts_rev.resolve("revenue", key)
+    assert res_rev.value == 500.0
+    assert "equals_dimensional_member" in res_rev.flags
+
+    # Net income match
+    payload_ni = {
+        "income_statement": [
+            _income_row("us-gaap_NetIncomeLoss", "Net Income", **{key: 150.0}),
+            _slice_row(
+                "us-gaap_NetIncomeLoss",
+                "Slice",
+                "us-gaap:StatementClassOfStockAxis",
+                "us-gaap:CommonClassAMember",
+                **{key: 150.0},
+            ),
+        ],
+        "balance_sheet": [],
+        "cash_flow": [],
+    }
+    stmts_ni = Statements.from_payload(payload_ni)
+    res_ni = stmts_ni.resolve("net_income", key)
+    assert res_ni.value == 150.0
+    assert "equals_dimensional_member" in res_ni.flags
+
+    # Equity match
+    payload_eq = {
+        "income_statement": [],
+        "balance_sheet": [
+            {
+                "concept": "us-gaap_StockholdersEquity",
+                "label": "Equity",
+                "abstract": False,
+                "dimension": False,
+                "2023-12-31": 1_000.0,
+            },
+            {
+                "concept": "us-gaap_StockholdersEquity",
+                "label": "Equity slice",
+                "abstract": False,
+                "dimension": True,
+                "dimension_axis": "us-gaap:StatementClassOfStockAxis",
+                "dimension_member": "us-gaap:CommonClassAMember",
+                "2023-12-31": 1_000.0,
+            },
+        ],
+        "cash_flow": [],
+    }
+    stmts_eq = Statements.from_payload(payload_eq)
+    res_eq = stmts_eq.resolve("equity", key)
+    assert res_eq.value == 1_000.0
+    assert "equals_dimensional_member" in res_eq.flags
+
+
+def test_equals_dimensional_member_not_raised_for_whole_entity_or_differing_value() -> None:
+    """A whole-entity axis slice or different value does not trigger equals_dimensional_member."""
+    key = "2023-12-31 (FY)"
+    # Whole-entity axis
+    payload_whole = {
+        "income_statement": [
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Revenues",
+                **{key: 500.0},
+            ),
+            _slice_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Segment",
+                "srt:ConsolidationItemsAxis",
+                "us-gaap:OperatingSegmentsMember",
+                **{key: 500.0},
+            ),
+        ],
+        "balance_sheet": [],
+        "cash_flow": [],
+    }
+    stmts_whole = Statements.from_payload(payload_whole)
+    res_whole = stmts_whole.resolve("revenue", key)
+    assert res_whole.value == 500.0
+    assert "equals_dimensional_member" not in res_whole.flags
+
+    # Differing value
+    payload_diff = {
+        "income_statement": [
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Revenues",
+                **{key: 500.0},
+            ),
+            _slice_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Product slice",
+                "us-gaap:ProductOrServiceAxis",
+                "us-gaap:ProductMember",
+                **{key: 300.0},
+            ),
+        ],
+        "balance_sheet": [],
+        "cash_flow": [],
+    }
+    stmts_diff = Statements.from_payload(payload_diff)
+    res_diff = stmts_diff.resolve("revenue", key)
+    assert res_diff.value == 500.0
+    assert "equals_dimensional_member" not in res_diff.flags

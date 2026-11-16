@@ -7,8 +7,10 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from conftest import cik_for
 from portfolio_common.db import Database
 
+import cycle.data as cycle_data
 import cycle.orchestrator as cycle_orchestrator
 import kg_schema
 from cycle.cli import _print_unscored, build_parser
@@ -19,8 +21,17 @@ from cycle.orchestrator import CycleReport, run_monitoring, run_replay, run_sele
 from cycle.replay import out_of_order_replay_reason, reset_replay_range
 from cycle.rules import RuleContext, RuleResult, disabled_rule_ids, enabled_rules, seed_catalog
 from cycle.rules.base import VetoHit
+from cycle.rules.builtin import _fresh, _NegativeFcfRule, _UtilityCashCoverageRule
 from cycle.scores import sector, technical, valorization
-from cycle.scores.normalize import cross_sectional_z, rank_pct, z_to_score
+from cycle.scores.normalize import (
+    DEFAULT_WINSOR,
+    MIN_FOR_WINSOR,
+    cross_sectional_z,
+    normalized_scores,
+    rank_pct,
+    winsorize,
+    z_to_score,
+)
 from cycle.state import ManifestMismatch, _redact, checkpoint, open_cycle
 from cycle.writers import (
     OutOfOrderCycle,
@@ -30,6 +41,7 @@ from cycle.writers import (
     veto_out_of_order_reason,
     write_vetoes,
 )
+from kg_schema.company_profile import CompanyProfile, profile_as_of
 from kg_schema.provenance import DirtyTree
 from kg_schema.queries import StaleAsOf, StaleGateVersion, VetoSchemaStale
 from kg_schema.versions import DATA_QUALITY_GATE_VERSION, VersionError
@@ -54,6 +66,33 @@ def test_rank_pct_handles_none_and_direction() -> None:
     assert desc[0] == 1.0 and desc[2] == 0.0
 
 
+# -- DQ-02 winsorizing (T-071 part 2b, D3) ----------------------------------
+
+
+def test_dq02_trims_floor_half_a_percent_per_tail_at_200_or_more() -> None:
+    """``floor(0.005 x n)`` values per tail: 1 at n = 200, 2 at n = 495, none below 200."""
+    assert MIN_FOR_WINSOR == 200
+    assert DEFAULT_WINSOR == 0.005
+    # n = 495: the two lowest and the two highest are trimmed (the 3rd smallest is the floor)
+    values = [float(i) for i in range(495)]
+    out = winsorize(values, DEFAULT_WINSOR)
+    assert out[0] == out[1] == 2.0  # the two lowest clamped to the 3rd smallest
+    assert out[-1] == out[-2] == 492.0  # the two highest clamped to the 3rd largest
+    assert winsorize(values, DEFAULT_WINSOR) != values
+    # n = 199: nothing is trimmed, whatever the fraction
+    assert winsorize([float(i) for i in range(199)], DEFAULT_WINSOR) == [
+        float(i) for i in range(199)
+    ]
+
+
+def test_dq02_below_200_is_the_identity_and_normalized_scores_uses_the_default() -> None:
+    """A 5-name cohort is untouched: ``normalized_scores``' default is DQ-02's 0.5%, not 2%."""
+    assert winsorize([1.0, 2.0, 3.0, 4.0, 5.0]) == [1.0, 2.0, 3.0, 4.0, 5.0]
+    raw = [float(i) for i in range(500)] + [1e6]
+    assert normalized_scores(raw) == normalized_scores(raw, winsor=0.005)
+    assert normalized_scores(raw) != normalized_scores(raw, winsor=0.02)
+
+
 # -- score modules ------------------------------------------------
 
 
@@ -73,49 +112,84 @@ def test_technical_prefers_momentum_and_low_vol() -> None:
         },
     }
     scores = {s.asset_id: s.raw_value for s in technical.compute(obs)}
+    assert scores[1] is not None and scores[2] is not None
     assert scores[1] > scores[2]
 
 
-def test_valorization_prefers_cheap_and_profitable() -> None:
-    rows: dict[int, dict[str, float | None]] = {
-        1: {
-            "valuation.free_cash_flow_yield": 0.08,
-            "profitability.return_on_equity": 0.30,
-            "leverage.debt_to_equity": 0.4,
-            "earnings_yield": 0.07,
-        },
-        2: {
-            "valuation.free_cash_flow_yield": 0.01,
-            "profitability.return_on_equity": 0.02,
-            "leverage.debt_to_equity": 4.0,
-            "earnings_yield": 0.01,
-        },
+def _value_member(aid: int, **values: float) -> valorization.Member:
+    """A member with all four measures applicable and a market cap of 1,000 on D."""
+    return valorization.Member(
+        asset_id=aid,
+        market_cap=1000.0,
+        values=dict(values),
+        applicable={name: ("A", "") for name in valorization.MEASURES},
+    )
+
+
+def test_valorization_prefers_the_cheapest_and_the_strongest_on_every_measure() -> None:
+    """VALORIZATION v2 (T-071 part 2b): the four measures are priced on D and ranked across the
+    cohort -- E/P, B/M, EBITDA/EV and the enterprise FCF yield. Member 1 is cheapest on all four."""
+    members = {
+        1: _value_member(
+            1,
+            net_income_ttm=100.0,
+            book_equity=500.0,
+            ebitda=200.0,
+            md38_numerator=80.0,
+            total_debt=100.0,
+            nci=0.0,
+            cash=50.0,
+        ),
+        2: _value_member(
+            2,
+            net_income_ttm=10.0,
+            book_equity=50.0,
+            ebitda=20.0,
+            md38_numerator=8.0,
+            total_debt=100.0,
+            nci=0.0,
+            cash=50.0,
+        ),
     }
-    scores = {s.asset_id: s.raw_value for s in valorization.compute(rows)}
+    scores = {s.asset_id: s.raw_value for s in valorization.compute(members)}
+    assert scores[1] is not None and scores[2] is not None
     assert scores[1] > scores[2]
 
 
-def test_valorization_negative_equity_leverage_ranks_worst_not_best() -> None:
-    """C2 (docs/model_fixes.md): a negative debt_to_equity (negative book
-    equity) must not be inverted into the BEST leverage percentile by
-    higher_is_better=False -- it should rank worst, same as very high
-    positive leverage would."""
-    rows: dict[int, dict[str, float | None]] = {
-        1: {  # negative equity, extreme leverage
-            "profitability.return_on_equity": 0.15,
-            "roic.return_on_invested_capital": 0.10,
-            "cashflow.free_cash_flow_margin": 0.10,
-            "leverage.debt_to_equity": -38.96,
-        },
-        2: {  # moderate positive leverage, otherwise identical quality inputs
-            "profitability.return_on_equity": 0.15,
-            "roic.return_on_invested_capital": 0.10,
-            "cashflow.free_cash_flow_margin": 0.10,
-            "leverage.debt_to_equity": 1.0,
-        },
+def test_valorization_leaves_a_nonpositive_book_equity_out_and_never_inverts_it() -> None:
+    """C4 p.15: negative-BE firms "we do not include them in the tests" -- B/M is left out and
+    flagged ``book_equity_nonpositive``, so a negative book equity can never rank as the cheapest
+    (the old ``_leverage_for_ranking`` inversion is gone)."""
+    members = {
+        1: _value_member(
+            1,
+            net_income_ttm=100.0,
+            book_equity=-500.0,
+            ebitda=200.0,
+            md38_numerator=80.0,
+            total_debt=100.0,
+            nci=0.0,
+            cash=50.0,
+        ),
+        2: _value_member(
+            2,
+            net_income_ttm=100.0,
+            book_equity=500.0,
+            ebitda=200.0,
+            md38_numerator=80.0,
+            total_debt=100.0,
+            nci=0.0,
+            cash=50.0,
+        ),
     }
-    scores = {s.asset_id: s.raw_value for s in valorization.compute(rows)}
-    assert scores[1] < scores[2]
+    scores = {s.asset_id: s for s in valorization.compute(members)}
+    bm1 = scores[1].components["measures"]["book_to_market"]
+    assert bm1["value"] is None
+    assert bm1["status"] == valorization.EXCLUDED_EQUITY
+    assert "book_equity_nonpositive" in bm1["flags"]
+    # member 1 still scores on the other three measures; member 2's B/M is present
+    assert scores[1].raw_value is not None and scores[2].raw_value is not None
+    assert scores[2].components["measures"]["book_to_market"]["status"] == valorization.PRESENT
 
 
 def test_sector_roll_up_mean_and_deviation() -> None:
@@ -170,31 +244,61 @@ def test_threshold_and_drawdown_rules(memory_db: Database) -> None:
     assert (2, "EARNINGS_MISSING", "SOFT") in hits
 
 
+def _neg_equity_record(**over: float | None) -> dict[str, float | None]:
+    """The DQ_NEG_EQUITY evidence a gate writes for a latest filing with equity <= 0 (D-04)."""
+    record: dict[str, float | None] = {
+        "equity": -1.0,
+        "net_debt_to_ebitda": None,
+        "interest_coverage": None,
+        "ebitda": None,
+        "net_debt": None,
+    }
+    record.update(over)
+    return record
+
+
+def _test_profile(
+    *, financial_firm: bool = False, regulated_utility: bool = False, reit: bool = False
+) -> CompanyProfile:
+    return CompanyProfile(
+        cik="0000000001",
+        ticker="TST",
+        company_name="Test Co",
+        type="article_9" if financial_firm else "operating",
+        financial_firm=financial_firm,
+        reit=reit,
+        multi_class=False,
+        regulated_utility=regulated_utility,
+        sector=None,
+        sub_industry=None,
+        evidence_accession=None,
+        valid_from="2020-01-01",
+        valid_to="",
+    )
+
+
+def _leverage_hits(memory_db: Database, ctx: RuleContext) -> list[tuple[int, str, str]]:
+    seed_catalog(memory_db)
+    return [
+        (h.asset_id, h.rule_id, h.severity)
+        for r in enabled_rules(memory_db)  # type: ignore[attr-defined]
+        for h in r.evaluate(ctx)
+    ]
+
+
 def test_leverage_rule_hard_vetoes_negative_equity_with_high_net_debt_to_ebitda(
     memory_db: Database,
 ) -> None:
-    """T-116 (docs/model_fixes.md): SBAC-shaped negative book equity -- a
-    negative debt_to_equity would trivially evade a plain `> 3.0` check, but
-    a high net_debt_to_ebitda still triggers the veto."""
-    seed_catalog(memory_db)
+    """D-04 (T-071 part 2a): SBAC-shaped negative book equity. The gate nulls D/E, so the screen
+    keys on the equity sign from the DQ_NEG_EQUITY record and vetoes on a high net_debt_to_ebitda."""
     ctx = RuleContext(
         cycle_date="2026-06-30",
-        metrics={
-            1: {
-                "leverage.debt_to_equity": -2.75,
-                "leverage.net_debt_to_ebitda": 7.35,
-                "leverage.interest_coverage": None,
-            },
-        },
+        metrics={1: {"leverage.net_debt_to_ebitda": 7.35, "leverage.interest_coverage": None}},
         price_obs={},
         last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record(ebitda=1.0, net_debt=7.35)},
     )
-    hits = [
-        (h.asset_id, h.rule_id, h.severity)
-        for r in enabled_rules(memory_db)
-        for h in r.evaluate(ctx)
-    ]  # type: ignore[attr-defined]
-    assert (1, "LEVERAGE_EXTREME", "HARD") in hits
+    assert (1, "LEVERAGE_EXTREME", "HARD") in _leverage_hits(memory_db, ctx)
 
 
 def test_leverage_rule_hard_vetoes_negative_equity_with_low_interest_coverage(
@@ -202,25 +306,35 @@ def test_leverage_rule_hard_vetoes_negative_equity_with_low_interest_coverage(
 ) -> None:
     """Proves net_debt_to_ebitda and interest_coverage are each independently
     sufficient (an OR, not an AND)."""
-    seed_catalog(memory_db)
     ctx = RuleContext(
         cycle_date="2026-06-30",
         metrics={
             1: {
-                "leverage.debt_to_equity": -10.0,
                 "leverage.net_debt_to_ebitda": 2.0,  # healthy
                 "leverage.interest_coverage": 1.0,  # < 1.5
             },
         },
         price_obs={},
         last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record(ebitda=1.0, net_debt=2.0)},
     )
-    hits = [
-        (h.asset_id, h.rule_id, h.severity)
-        for r in enabled_rules(memory_db)
-        for h in r.evaluate(ctx)
-    ]  # type: ignore[attr-defined]
-    assert (1, "LEVERAGE_EXTREME", "HARD") in hits
+    assert (1, "LEVERAGE_EXTREME", "HARD") in _leverage_hits(memory_db, ctx)
+
+
+def test_leverage_rule_hard_vetoes_negative_equity_burning_cash_with_debt(
+    memory_db: Database,
+) -> None:
+    """T-116 (PR #95 review): net_debt_to_ebitda goes *negative* when EBITDA itself is negative
+    (WAT-shaped: EBITDA -$11M, net debt $4.4B, ratio -399) -- the most distressed profile. The rule
+    tells it apart from a net-cash position by the raw EBITDA/net debt the gate recorded."""
+    ctx = RuleContext(
+        cycle_date="2026-06-30",
+        metrics={1: {"leverage.net_debt_to_ebitda": -399.0, "leverage.interest_coverage": None}},
+        price_obs={},
+        last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record(ebitda=-11.0, net_debt=4400.0)},
+    )
+    assert (1, "LEVERAGE_EXTREME", "HARD") in _leverage_hits(memory_db, ctx)
 
 
 def test_leverage_rule_spares_negative_equity_with_healthy_debt_load(
@@ -229,99 +343,100 @@ def test_leverage_rule_spares_negative_equity_with_healthy_debt_load(
     """Not "any negative equity = HARD": MCD-shaped negative equity -- a
     healthy net_debt_to_ebitda/interest_coverage, including exactly at the
     calibrated thresholds (strict inequalities, not >=/<=), doesn't veto."""
-    seed_catalog(memory_db)
     ctx = RuleContext(
         cycle_date="2026-06-30",
         metrics={
             1: {
-                "leverage.debt_to_equity": -5.0,
                 "leverage.net_debt_to_ebitda": 5.0,  # exactly at threshold, not >
                 "leverage.interest_coverage": 1.5,  # exactly at threshold, not <
             },
         },
         price_obs={},
         last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record(ebitda=1.0, net_debt=5.0)},
     )
-    hits = [
-        (h.asset_id, h.rule_id, h.severity)
-        for r in enabled_rules(memory_db)
-        for h in r.evaluate(ctx)
-    ]  # type: ignore[attr-defined]
+    hits = _leverage_hits(memory_db, ctx)
+    assert not any(h[1] == "LEVERAGE_EXTREME" for h in hits)
+
+
+def test_leverage_rule_spares_a_negative_ratio_with_net_cash_not_burning_cash(
+    memory_db: Database,
+) -> None:
+    """The same negative ratio, for the healthy reason (HUM-shaped: net cash exceeds debt, EBITDA
+    slightly negative): with net debt <= 0 and no coverage failure it is not distress."""
+    ctx = RuleContext(
+        cycle_date="2026-06-30",
+        metrics={1: {"leverage.net_debt_to_ebitda": -1.1, "leverage.interest_coverage": 8.0}},
+        price_obs={},
+        last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record(ebitda=-2.0, net_debt=-40.0)},
+    )
+    hits = _leverage_hits(memory_db, ctx)
     assert not any(h[1] == "LEVERAGE_EXTREME" for h in hits)
 
 
 def test_leverage_rule_negative_equity_with_no_corroborating_metrics_soft_vetoes(
     memory_db: Database,
 ) -> None:
-    """T-116: if both net_debt_to_ebitda and interest_coverage are missing, a
-    negative debt_to_equity can't be verified either way -- routed to SOFT
-    review, not silently passed (the pre-T-116 gap)."""
-    seed_catalog(memory_db)
+    """T-116: with no net_debt_to_ebitda, no interest_coverage and no EBITDA/net-debt pair, a
+    negative-equity filing can't be verified either way -- routed to SOFT review, not silently
+    passed (the pre-T-116 gap)."""
     ctx = RuleContext(
         cycle_date="2026-06-30",
-        metrics={1: {"leverage.debt_to_equity": -38.96}},
+        metrics={1: {}},
         price_obs={},
         last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record()},
     )
-    hits = [
-        (h.asset_id, h.rule_id, h.severity)
-        for r in enabled_rules(memory_db)
-        for h in r.evaluate(ctx)
-    ]  # type: ignore[attr-defined]
+    hits = _leverage_hits(memory_db, ctx)
     assert (1, "LEVERAGE_EXTREME", "SOFT") in hits
     assert not any(h[1] == "LEVERAGE_EXTREME" and h[2] == "HARD" for h in hits)
 
 
-def test_leverage_rule_treats_a_negative_net_debt_to_ebitda_as_unresolved_not_healthy(
+def test_leverage_rule_does_not_apply_its_negative_equity_screen_to_a_financial_firm(
     memory_db: Database,
 ) -> None:
-    """T-116 (PR #95 review): the rule only ever sees the already-divided ratio, never the raw
-    EBITDA/net debt it came from, so it cannot tell a genuine net-cash position (negative
-    ratio, healthy) apart from negative EBITDA with positive net debt (negative ratio, the most
-    distressed profile of all, WAT-shaped). A negative ratio is therefore unresolved, falling
-    back to interest_coverage alone -- SOFT review here, since neither is truly available."""
-    seed_catalog(memory_db)
+    """APP-00/APP-02 (D-04): the negative-equity distress screen does not apply to a financial
+    firm. The asset is evaluated and never hit, so a stint opened before the exemption closes."""
     ctx = RuleContext(
         cycle_date="2026-06-30",
-        metrics={
-            1: {"leverage.debt_to_equity": -5.0, "leverage.net_debt_to_ebitda": -399.0},
-        },
+        metrics={1: {"leverage.net_debt_to_ebitda": 7.35, "leverage.interest_coverage": 0.5}},
         price_obs={},
         last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record(ebitda=-1.0, net_debt=7.35)},
+        profiles={1: _test_profile(financial_firm=True)},
     )
-    hits = [
-        (h.asset_id, h.rule_id, h.severity)
-        for r in enabled_rules(memory_db)
-        for h in r.evaluate(ctx)
-    ]  # type: ignore[attr-defined]
-    assert (1, "LEVERAGE_EXTREME", "SOFT") in hits
-    assert not any(h[1] == "LEVERAGE_EXTREME" and h[2] == "HARD" for h in hits)
+    assert not any(h[1] == "LEVERAGE_EXTREME" for h in _leverage_hits(memory_db, ctx))
+
+
+def test_leverage_rule_still_applies_its_positive_equity_branch_to_a_financial_firm(
+    memory_db: Database,
+) -> None:
+    """Only the negative-equity screen is exempt for a financial firm; a D/E above the threshold is
+    still HARD (the profile changes one branch, not the rule)."""
+    ctx = RuleContext(
+        cycle_date="2026-06-30",
+        metrics={1: {"leverage.debt_to_equity": 4.0}},
+        price_obs={},
+        last_fundamental={1: "2026-03-31"},
+        profiles={1: _test_profile(financial_firm=True)},
+    )
+    assert (1, "LEVERAGE_EXTREME", "HARD") in _leverage_hits(memory_db, ctx)
 
 
 def test_leverage_rule_a_negative_net_debt_to_ebitda_still_hard_vetoes_via_interest_coverage(
     memory_db: Database,
 ) -> None:
-    """The negative ratio contributes nothing either way, but interest_coverage is a
-    well-defined signal on its own and still fires."""
-    seed_catalog(memory_db)
+    """The negative ratio contributes nothing either way (a net-cash position here), but
+    interest_coverage is a well-defined signal on its own and still fires."""
     ctx = RuleContext(
         cycle_date="2026-06-30",
-        metrics={
-            1: {
-                "leverage.debt_to_equity": -5.0,
-                "leverage.net_debt_to_ebitda": -399.0,
-                "leverage.interest_coverage": 1.0,
-            },
-        },
+        metrics={1: {"leverage.net_debt_to_ebitda": -399.0, "leverage.interest_coverage": 1.0}},
         price_obs={},
         last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record(ebitda=-2.0, net_debt=-40.0)},
     )
-    hits = [
-        (h.asset_id, h.rule_id, h.severity)
-        for r in enabled_rules(memory_db)
-        for h in r.evaluate(ctx)
-    ]  # type: ignore[attr-defined]
-    assert (1, "LEVERAGE_EXTREME", "HARD") in hits
+    assert (1, "LEVERAGE_EXTREME", "HARD") in _leverage_hits(memory_db, ctx)
 
 
 def test_leverage_rule_positive_debt_to_equity_path_unchanged(memory_db: Database) -> None:
@@ -344,6 +459,132 @@ def test_leverage_rule_positive_debt_to_equity_path_unchanged(memory_db: Databas
     assert not any(h[0] == 2 and h[1] == "LEVERAGE_EXTREME" for h in hits)
 
 
+# -- D-13: the regulated-utility rules (T-071 part 2a) ----------
+
+
+def _utility_record(
+    bound_in: float | None, bound_wc: float | None, *, ambiguous: bool = False
+) -> dict[str, object]:
+    """The ``rule_input.utility_cash_coverage_3y`` row ``cycle.data.utility_cash_coverage`` reads."""
+    return {
+        "value": bound_in,
+        "ambiguous_in": bound_in,
+        "ambiguous_as_wc": bound_wc,
+        "missing_bound": bound_in is None or bound_wc is None,
+        "ambiguous_working_capital": ambiguous,
+    }
+
+
+def test_negative_fcf_exempts_a_regulated_utility_and_still_fires_otherwise() -> None:
+    """D-13: the overlay is evaluated and never hit, so a stint opened before it closes."""
+    ctx = RuleContext(
+        cycle_date="2026-09-22",
+        metrics={
+            1: {"cashflow.free_cash_flow_margin": -0.2},  # regulated utility: exempt
+            2: {"cashflow.free_cash_flow_margin": -0.2},  # operating company: HARD
+            3: {"cashflow.free_cash_flow_margin": 0.1},  # positive: evaluated, not hit
+        },
+        price_obs={},
+        last_fundamental={},
+        profiles={1: _test_profile(regulated_utility=True), 2: _test_profile(), 3: _test_profile()},
+    )
+    result = _NegativeFcfRule().evaluate(ctx)
+    assert [h.asset_id for h in result.hits] == [2]
+    assert result.hits[0].severity == "HARD"
+    assert result.evaluated == frozenset({1, 2, 3})
+
+
+def test_the_reit_overlay_is_evaluated_and_never_hit() -> None:
+    """D-14 (the user's decision, 2026-10-15): a REIT is evaluated and never hit, so a stint opened
+    before the overlay closes; an operating company with the same margin is HARD. The profile is
+    the APP-00 one (the REIT overlay), never the GICS sector."""
+    ctx = RuleContext(
+        cycle_date="2026-09-22",
+        metrics={
+            1: {"cashflow.free_cash_flow_margin": -0.2},  # REIT: exempt
+            2: {"cashflow.free_cash_flow_margin": -0.2},  # operating company: HARD
+            3: {"cashflow.free_cash_flow_margin": -0.2},  # REIT: exempt
+            4: {"cashflow.free_cash_flow_margin": 0.1},  # REIT, positive: evaluated, not hit
+        },
+        price_obs={},
+        last_fundamental={},
+        profiles={
+            1: _test_profile(reit=True),
+            2: _test_profile(),
+            3: _test_profile(reit=True),
+            4: _test_profile(reit=True),
+        },
+    )
+    result = _NegativeFcfRule().evaluate(ctx)
+    assert [h.asset_id for h in result.hits] == [2]
+    assert result.hits[0].severity == "HARD"
+    assert result.evaluated == frozenset({1, 2, 3, 4})
+
+
+def test_a_reit_whose_profile_interval_ends_is_evaluated_as_its_new_profile_says() -> None:
+    """D-14 keys on ``profile_as_of`` on the cycle date: a leaver REIT is exempt while its interval
+    holds and, once it has ended, is evaluated as an unknown profile -- an operating company -- and
+    hit like any other member."""
+    dre = profile_as_of("0000783280", "2022-06-30")  # Duke Realty, valid_to 2022-10-03
+    after = profile_as_of("0000783280", "2023-06-30")
+    assert dre is not None and dre.reit and after is None
+    metrics: dict[int, dict[str, float | None]] = {1: {"cashflow.free_cash_flow_margin": -0.2}}
+    ctx = RuleContext(
+        cycle_date="2022-06-30",
+        metrics=metrics,
+        price_obs={},
+        last_fundamental={},
+        profiles={1: dre},
+    )
+    assert _NegativeFcfRule().evaluate(ctx).hits == []
+    later = RuleContext(
+        cycle_date="2023-06-30",
+        metrics=metrics,
+        price_obs={},
+        last_fundamental={},
+        profiles={1: after},
+    )
+    assert [h.asset_id for h in _NegativeFcfRule().evaluate(later).hits] == [1]
+
+
+def test_utility_cash_coverage_fires_only_when_both_bounds_are_below_the_cutoff() -> None:
+    """R2: HARD needs *both* the ambiguous-in and the ambiguous-as-working-capital bounds below 5%;
+    a straddling pair or a missing bound is evaluated and never hit, and a utility with no rule
+    input at all is not evaluated."""
+    ctx = RuleContext(
+        cycle_date="2026-09-22",
+        metrics={},
+        price_obs={},
+        last_fundamental={},
+        profiles={
+            1: _test_profile(regulated_utility=True),  # both below: HARD
+            2: _test_profile(regulated_utility=True),  # straddles (CEG): no veto
+            3: _test_profile(regulated_utility=True),  # missing bound (ED/EXC/WEC): no veto
+            4: _test_profile(regulated_utility=True),  # no rule input: not evaluated
+            5: _test_profile(),  # not the overlay: not evaluated
+        },
+        utility_cash_coverage={
+            1: _utility_record(-0.10, 0.01),
+            2: _utility_record(-0.23, 0.56, ambiguous=True),
+            3: _utility_record(0.12, None),
+            5: _utility_record(-0.10, -0.10),
+        },
+    )
+    result = _UtilityCashCoverageRule().evaluate(ctx)
+    assert [h.asset_id for h in result.hits] == [1]
+    assert result.hits[0].severity == "HARD"
+    assert result.hits[0].evidence["utility_cash_coverage_3y_ambiguous_in"] == -0.10
+    assert result.hits[0].evidence["utility_cash_coverage_3y_ambiguous_as_wc"] == 0.01
+    assert result.evaluated == frozenset({1, 2, 3})
+
+
+def test_utility_cash_coverage_keeps_the_declared_cutoff_and_applies_to_the_overlay() -> None:
+    rule = _UtilityCashCoverageRule()
+    assert rule.threshold == 0.05
+    assert rule.SEVERITY == "HARD"
+    assert "regulated-utility overlay" in rule.PARAMS["applies_to"]
+
+
 # -- full cycle smoke -----------------------------------------
 
 
@@ -360,13 +601,31 @@ def test_selection_cycle_end_to_end(cycle_seed: Database) -> None:
     run_row = conn.execute("SELECT status FROM cycle_run ORDER BY id DESC LIMIT 1").fetchone()
     assert run_row["status"] == "completed"
 
-    for stype in ("TECHNICAL", "VALORIZATION", "SECTOR"):
+    for stype in ("TECHNICAL", "SECTOR"):
         n = conn.execute(
             "SELECT COUNT(*) FROM score_snapshot WHERE score_type = ? AND event_time = '2026-06-30' "
             "AND normalized_score IS NOT NULL",
             (stype,),
         ).fetchone()[0]
         assert n == 5
+
+    # VALORIZATION v2 (T-071 part 2b): this cohort has no market cap and no D1 rule input, so every
+    # measure is `missing_input` and the raw score is empty -- never a neutral 50. The row is still
+    # written, with its components, so the coverage is visible, and the blend renormalizes over
+    # FUNDAMENTAL and TECHNICAL.
+    val = conn.execute(
+        "SELECT COUNT(*) AS n, SUM(raw_value IS NOT NULL) AS scored FROM score_snapshot "
+        "WHERE score_type = 'VALORIZATION' AND event_time = '2026-06-30'"
+    ).fetchone()
+    assert val["n"] == 5 and val["scored"] == 0
+    components = json.loads(
+        conn.execute(
+            "SELECT inputs_json FROM score_snapshot WHERE score_type = 'VALORIZATION' "
+            "AND asset_id = 1 AND event_time = '2026-06-30'"
+        ).fetchone()["inputs_json"]
+    )
+    assert components["applicable"] == 4.0 and components["present"] == 0.0
+    assert components["measures"]["earnings_yield"]["status"] == "missing_input"
 
     # one sector_aggregate_snapshot row per sector present in the cohort
     agg = conn.execute(
@@ -395,6 +654,202 @@ def test_cycle_resumes_without_duplicating(cycle_seed: Database) -> None:
     assert set(again.steps_skipped) >= {"technical", "valorization", "rank", "positions"}
     assert conn.execute("SELECT COUNT(*) FROM score_snapshot").fetchone()[0] == before
     assert conn.execute("SELECT COUNT(*) FROM portfolio_position").fetchone()[0] == 3
+
+
+# -- T-071 part 2b, D4 (N9): the ranking reads its own cycle's FUNDAMENTAL normalization ------
+
+D1, D2 = "2026-06-30", "2026-07-31"
+
+
+def _ranking(conn: Database, cycle_date: str = D1) -> list[tuple[str, int, float]]:
+    return [
+        (str(r["ticker"]), int(r["rank"]), float(r["blended_score"]))
+        for r in conn.execute(
+            "SELECT a.ticker, r.rank, r.blended_score FROM cycle_ranking r "
+            "JOIN assets a ON a.id = r.asset_id JOIN cycle_run cr ON cr.id = r.cycle_run_id "
+            "WHERE cr.cycle_date = ? AND cr.cycle_type = 'SELECTION' ORDER BY r.rank",
+            (cycle_date,),
+        )
+    ]
+
+
+def _join_sixth_member(conn: Database, udb: Path) -> None:
+    """FFF joins the index on D2: a 10-K and a FUNDAMENTAL score **usable from 2026-07-15**, so D2's
+    cohort is six names (its normalization is not D1's) while D1, at 2026-06-30, still sees five."""
+    raw = sqlite3.connect(udb)
+    raw.execute(
+        "INSERT INTO universe_membership (symbol, security, gics_sector, gics_sub_industry, cik, "
+        "valid_from, valid_to, source) VALUES ('FFF', 'FFF Inc.', 'S1', 'SI0', ?, '2026-07-01', "
+        "NULL, 'test')",
+        (cik_for("FFF"),),
+    )
+    raw.commit()
+    raw.close()
+    conn.execute("INSERT INTO assets (id, ticker, sector_id) VALUES (6, 'FFF', 1)")
+    fid = conn.execute(
+        "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
+        "filing_date, available_at, retrieved_at) VALUES (6, '10-K', 2025, 'FY2025', '2025-12-31', "
+        "'2026-07-14', '2026-07-15', '2026-07-14T00:00:00Z') RETURNING id"
+    ).fetchone()["id"]
+    conn.execute(
+        "INSERT INTO score_snapshot (asset_id, score_type, raw_value, normalized_score, event_time, "
+        "computed_at, model, run_kind, filing_id, available_at) VALUES "
+        "(6, 'FUNDAMENTAL', 72.0, 72.0, '2025-12-31', '2026-07-14T00:00:00Z', 'seed', 'analysis', ?, "
+        "'2026-07-15')",
+        (fid,),
+    )
+    # a close on every session the cohort's own (T-153 part 3c): the sixth member is eligible
+    # from its first session, so it is not an unpriced gap that would refuse the run
+    conn.execute(
+        "INSERT INTO price_observation (asset_id, obs_date, close, atr_14, realized_vol_90d, "
+        "max_drawdown_90d, momentum_63d, momentum_21d, event_time, computed_at, engine_version) "
+        "SELECT 6, obs_date, close, atr_14, realized_vol_90d, max_drawdown_90d, momentum_63d, "
+        "momentum_21d, event_time, computed_at, engine_version FROM price_observation "
+        "WHERE asset_id = 1"
+    )
+    conn.commit()
+
+
+def test_rank_reads_its_own_cycles_fundamental_normalization(
+    cycle_seed: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """N9 (T-071 part 2b, D4): a ``rank`` resumed after another cycle date ran in between must read
+    **D1's** FUNDAMENTAL normalization, not the value D2's ``normalize`` left on the shared filing
+    snapshot row (``cycle backfill`` resumes from checkpoints, so this happens).
+
+    1. D1 runs uninterrupted -- its ranking is the baseline; 2. D2 (a later date, one more universe
+    member, so its normalization differs) runs and overwrites the shared rows; 3. D1 is resumed at
+    ``rank``; 4. its ranking must equal the baseline. Fails on master, whose ``_rank`` reads
+    ``score_snapshot.normalized_score`` back off the shared row instead of recomputing it.
+    """
+    conn = cycle_seed
+    # 1: the uninterrupted D1 run -- the baseline.
+    run_selection(_settings(conn), D1, conn=conn)
+    baseline = _ranking(conn)
+    d1_run = conn.execute(
+        "SELECT id FROM cycle_run WHERE cycle_type = 'SELECTION' AND cycle_date = ?", (D1,)
+    ).fetchone()["id"]
+    before = {
+        int(r["asset_id"]): r["normalized_score"]
+        for r in conn.execute(
+            "SELECT asset_id, normalized_score FROM score_snapshot WHERE score_type = 'FUNDAMENTAL'"
+        )
+    }
+
+    # 2: D2 (a MONITORING run, so it writes no book that D1's re-run would clash with) -- its
+    # `normalize` rewrites the shared FUNDAMENTAL rows with the six-name cohort's values.
+    _join_sixth_member(conn, tmp_path / "cycle_universe.db")
+    run_monitoring(_settings(conn), D2, conn=conn)
+    after = {
+        int(r["asset_id"]): r["normalized_score"]
+        for r in conn.execute(
+            "SELECT asset_id, normalized_score FROM score_snapshot WHERE score_type = 'FUNDAMENTAL'"
+        )
+    }
+    assert any(before[a] != after[a] for a in before if a in after)  # D2 really moved them
+
+    # 3: resume D1 at `rank` -- what an interrupted `cycle backfill` leaves behind.
+    conn.execute(
+        "DELETE FROM cycle_checkpoint WHERE cycle_run_id = ? AND step IN ('rank', 'positions')",
+        (d1_run,),
+    )
+    conn.commit()
+    resumed = run_selection(_settings(conn), D1, conn=conn)
+    assert "rank" in resumed.steps_run
+
+    # 4: D1's own ranking, not D2's normalization.
+    assert _ranking(conn) == baseline
+
+
+# -- A-2: the FUNDAMENTAL cohort is the decision date's universe members ---------------
+
+_WEIGHTS = {"profitability": 0.25, "financial_strength": 0.25, "cash_flow": 0.25, "growth": 0.25}
+
+
+def _seed_nonmember_rows(conn: Database) -> None:
+    """One future member and one stale former member, each with a usable FUNDAMENTAL row."""
+    conn.execute("INSERT INTO assets (id, ticker, sector_id) VALUES (6, 'FUT', 1), (7, 'OLD', 2)")
+    for asset_id, raw, period_end, filing_date, available_at in (
+        (6, 100.0, "2025-12-31", "2026-01-30", "2026-02-02"),  # joins after D1
+        (7, -100.0, "2022-12-31", "2023-01-04", "2023-01-05"),  # left long before D1
+    ):
+        filing_id = conn.execute(
+            "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
+            "filing_date, available_at, retrieved_at) VALUES (?, '10-K', 2025, 'FY2025', ?, "
+            "?, ?, '2026-02-01T00:00:00Z') RETURNING id",
+            (asset_id, period_end, filing_date, available_at),
+        ).fetchone()["id"]
+        conn.execute(
+            "INSERT INTO score_snapshot (asset_id, score_type, raw_value, normalized_score, "
+            "event_time, computed_at, model, run_kind, filing_id, available_at) VALUES "
+            "(?, 'FUNDAMENTAL', ?, 777.0, ?, '2026-02-01T00:00:00Z', 'seed', 'analysis', ?, ?)",
+            (asset_id, raw, period_end, filing_id, available_at),
+        )
+    conn.commit()
+
+
+def test_the_fundamental_cohort_is_members_only_hand_computed(cycle_seed: Database) -> None:
+    """(i) A future-member row and a stale former-member row do not enter the cohort: the five
+    members' normalized values are exactly ``normalized_scores([72, 64, 56, 48, 40])``."""
+    conn = cycle_seed
+    _seed_nonmember_rows(conn)
+    rows, normalized = cycle_orchestrator._fundamental_normalization(
+        conn, D1, _WEIGHTS, {1, 2, 3, 4, 5}
+    )
+    assert [int(r["asset_id"]) for r in rows] == [1, 2, 3, 4, 5]
+    expected = normalized_scores([72.0, 64.0, 56.0, 48.0, 40.0])
+    assert normalized == pytest.approx(expected, abs=1e-12)
+
+
+def test_the_normalize_writer_and_the_rank_reader_share_the_member_cohort(
+    cycle_seed: Database,
+) -> None:
+    """(ii) The writer (``normalize``) and the reader (``rank``) give the same value, and a
+    non-member row is not written."""
+    conn = cycle_seed
+    _seed_nonmember_rows(conn)
+    run_selection(_settings(conn), D1, conn=conn)
+    stored = {
+        int(r["asset_id"]): r["normalized_score"]
+        for r in conn.execute(
+            "SELECT asset_id, normalized_score FROM score_snapshot "
+            "WHERE score_type = 'FUNDAMENTAL' AND asset_id IN (1, 2, 3, 4, 5, 6, 7)"
+        )
+    }
+    _, normalized = cycle_orchestrator._fundamental_normalization(
+        conn, D1, _WEIGHTS, {1, 2, 3, 4, 5}
+    )
+    assert [stored[aid] for aid in (1, 2, 3, 4, 5)] == pytest.approx(normalized, abs=1e-12)
+    # the writer normalized only the members; the non-member rows keep their old value
+    assert stored[6] == 777.0 and stored[7] == 777.0
+
+
+def test_a_member_without_a_fundamental_row_stays_unscored(cycle_seed: Database) -> None:
+    """(iii) A member with no scored FUNDAMENTAL row is out of the cohort and ranked as before
+    (unscored, not carried forward); the other members normalize over themselves."""
+    conn = cycle_seed
+    conn.execute(
+        "UPDATE score_snapshot SET raw_value = NULL "
+        "WHERE asset_id = 5 AND score_type = 'FUNDAMENTAL'"
+    )
+    conn.commit()
+    rows, normalized = cycle_orchestrator._fundamental_normalization(
+        conn, D1, _WEIGHTS, {1, 2, 3, 4, 5}
+    )
+    assert [int(r["asset_id"]) for r in rows] == [1, 2, 3, 4]
+    assert normalized == pytest.approx(normalized_scores([72.0, 64.0, 56.0, 48.0]), abs=1e-12)
+    assert 5 in unscored_assets([1, 2, 3, 4, 5], {int(r["asset_id"]): 0 for r in rows})
+    settings = CycleSettings(db_path=Path(":memory:"), top_n=3, unscored_max_share=0.5)
+    run_selection(settings, D1, conn=conn)
+    # EEE is still ranked (as before) but carries the UNSCORED gap and is not selected.
+    row = conn.execute(
+        "SELECT r.vetoed, r.veto_rules_json, r.selected FROM cycle_ranking r "
+        "JOIN assets a ON a.id = r.asset_id JOIN cycle_run cr ON cr.id = r.cycle_run_id "
+        "WHERE a.ticker = 'EEE' AND cr.cycle_date = ? AND cr.cycle_type = 'SELECTION'",
+        (D1,),
+    ).fetchone()
+    assert row is not None and int(row["selected"]) == 0
+    assert "UNSCORED" in json.loads(row["veto_rules_json"] or "[]")
 
 
 # -- T-097: the out-of-order-cycle guard -------------------------
@@ -888,7 +1343,7 @@ def test_select_refuses_when_the_gate_only_has_an_older_version_s_rows(
     _dq_issue(conn, fid, 1, "dq-v1")
     before = conn.execute("SELECT COUNT(*) FROM cycle_run").fetchone()[0]
 
-    with pytest.raises(StaleGateVersion, match=r"dq-v1.*dq-v2"):
+    with pytest.raises(StaleGateVersion, match=rf"dq-v1.*{DATA_QUALITY_GATE_VERSION}"):
         run_selection(_settings(conn), "2026-06-30", conn=conn)
 
     # refused before any cycle_run row is written, like the other prechecks
@@ -1458,7 +1913,10 @@ def test_a_cycle_records_the_metric_versions_it_read(cycle_seed: Database) -> No
             "profitability": "metrics-v1",
             "valuation": "metrics-v1",
         },
-        "quality": "dq-v2",  # the Ring-1 gate version it read quarantines under (T-065/T-116)
+        # the Ring-1 gate version it read quarantines under (T-065/T-116; current = T-150's bump)
+        "quality": DATA_QUALITY_GATE_VERSION,
+        # the eligibility rule the run was built on (T-153 part 3c): C11 printed p.36 by analogy
+        "eligibility": cycle_orchestrator.ELIGIBILITY_MANIFEST,
     }
 
 
@@ -1561,3 +2019,283 @@ def test_the_cycle_flag_exists_and_the_cli_exits_1_on_a_refusal(
     monkeypatch.setattr("cycle.cli.run_monitoring", unstored)
     assert cycle_main(["monitor", "--date", "2026-06-30", "--metrics-version", "metrics-v9"]) == 1
     assert "metrics-v9" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("exc_type", [KeyboardInterrupt, RuntimeError])
+def test_step_failure_rolls_back_and_marks_failed(
+    cycle_seed: Database,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exc_type: type[BaseException],
+) -> None:
+    db_path = tmp_path / f"cycle_test_{exc_type.__name__}.db"
+    file_raw = sqlite3.connect(db_path)
+    cycle_seed.raw.backup(file_raw)
+    file_raw.close()
+
+    conn = kg_schema.db.connect(db_path)
+    settings = CycleSettings(db_path=db_path, top_n=3)
+
+    orig_write_scores = cycle_orchestrator.writers.write_scores
+
+    def _broken_write_scores(  # noqa: PLR0913, PLR0917 - matches write_scores signature
+        c: Database,
+        score_type: str,
+        cycle_date: str,
+        raw: dict[int, float],
+        normalized: dict[int, float],
+        components: dict[int, dict[str, float | None]],
+        *,
+        run_id: int,
+        model: str = "deterministic",
+    ) -> int:
+        if score_type == "TECHNICAL":
+            c.execute(
+                "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, "
+                "computed_at, model, run_kind) VALUES (1, 'TECHNICAL', 99.0, '2026-06-30', "
+                "'2026-06-30', 'uncommitted_marker', 'test')"
+            )
+            raise exc_type("simulated exception")
+        return orig_write_scores(
+            c, score_type, cycle_date, raw, normalized, components, run_id=run_id, model=model
+        )
+
+    monkeypatch.setattr(cycle_orchestrator.writers, "write_scores", _broken_write_scores)
+
+    with pytest.raises(exc_type):
+        run_selection(settings, "2026-06-30", conn=conn)
+
+    fresh = kg_schema.db.connect(db_path)
+    try:
+        uncommitted = fresh.execute(
+            "SELECT COUNT(*) FROM score_snapshot WHERE model = 'uncommitted_marker'"
+        ).fetchone()[0]
+        assert uncommitted == 0
+
+        chk = fresh.execute(
+            "SELECT status FROM cycle_checkpoint WHERE step = 'technical'"
+        ).fetchone()
+        assert chk is not None and chk["status"] == "failed"
+
+        run_row = fresh.execute("SELECT status FROM cycle_run").fetchone()
+        assert run_row is not None and run_row["status"] == "failed"
+    finally:
+        conn.close()
+        fresh.close()
+
+
+def test_interrupted_data_read_marks_cycle_failed(
+    cycle_seed: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "cycle_test_read.db"
+    file_raw = sqlite3.connect(db_path)
+    cycle_seed.raw.backup(file_raw)
+    file_raw.close()
+
+    conn = kg_schema.db.connect(db_path)
+    settings = CycleSettings(db_path=db_path, top_n=3)
+
+    def _broken_latest_metrics(*args: object, **kwargs: object) -> object:
+        raise KeyboardInterrupt("simulated interrupt during latest_metrics")
+
+    monkeypatch.setattr(cycle_orchestrator.data, "latest_metrics", _broken_latest_metrics)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_selection(settings, "2026-06-30", conn=conn)
+
+    fresh = kg_schema.db.connect(db_path)
+    try:
+        run_row = fresh.execute("SELECT status FROM cycle_run").fetchone()
+        assert run_row is not None and run_row["status"] == "failed"
+    finally:
+        conn.close()
+        fresh.close()
+
+
+# -- T-153 part 3c: an unpriced member is ineligible (the session rule) ------------------------
+
+
+def _obs_row(conn: Database, asset: int, day: str, close: float | None = 100.0) -> None:
+    conn.execute(
+        "INSERT INTO price_observation (asset_id, obs_date, close, event_time, computed_at, "
+        "engine_version) VALUES (?, ?, ?, ?, '2026-01-01T00:00:00Z', 'priceobs-v2')",
+        (asset, day, close, day),
+    )
+    conn.commit()
+
+
+def test_eligibility_is_a_close_on_the_cycle_dates_own_session(memory_db: Database) -> None:
+    """C11 printed p.36 by analogy: a member is usable only with a close on session(D).
+
+    A holiday does not exclude a name (its session is the earlier one); a one-day hole does.
+    """
+    conn = memory_db
+    conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'AAA'), (2, 'BBB')")
+    # AAA: the Friday close, asked for on MLK Monday 2026-01-19 (a market holiday)
+    _obs_row(conn, 1, "2026-01-16")
+    # BBB: D-1's close only (Thursday 2026-07-02), asked for on Monday 2026-07-06
+    _obs_row(conn, 2, "2026-07-02")
+    assert cycle_data.unpriced_assets(conn, [1], "2026-01-19", "priceobs-v2") == []
+    assert cycle_data.unpriced_assets(conn, [2], "2026-07-06", "priceobs-v2") == [2]
+    assert cycle_data.unpriced_assets(conn, [1, 2], "2026-07-06", "priceobs-v2") == [1, 2]
+    # a NULL close is not a close, and another engine version is not the cycle's
+    _obs_row(conn, 1, "2026-07-06", close=None)
+    assert cycle_data.unpriced_assets(conn, [1], "2026-07-06", "priceobs-v2") == [1]
+    conn.execute("UPDATE price_observation SET engine_version = 'priceobs-v1' WHERE asset_id = 1")
+    conn.commit()
+    assert cycle_data.unpriced_assets(conn, [1], "2026-07-06", "priceobs-v2") == [1]
+
+
+def test_the_price_vetoes_keep_their_own_seven_day_window(memory_db: Database) -> None:
+    """The two rules are deliberately different: the vetoes still read a 7-day-old close."""
+    conn = memory_db
+    conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'AAA')")
+    _obs_row(conn, 1, "2026-06-30")
+    assert cycle_data.unpriced_assets(conn, [1], "2026-07-07", "priceobs-v2") == [
+        1
+    ]  # not session(D)
+    obs = cycle_data.latest_price_observation(conn, "2026-07-07", "priceobs-v2")
+    ctx = RuleContext(
+        cycle_date="2026-07-07",
+        metrics={1: {}},
+        price_obs=obs,
+        last_fundamental={},
+        data_quality={},
+        sectors={1: None},
+        negative_equity={},
+        profiles={},
+        utility_cash_coverage={},
+    )
+    assert _fresh(ctx, obs[1]) is True  # exactly 7 days: the vetoes still evaluate it
+
+
+def test_the_two_gaps_share_one_refusal_counted_once() -> None:
+    """D2: one coverage rule; an asset that is both counts once; both lists are named."""
+    reason = cycle_data.too_many_unrankable_reason([1, 2], [2, 3], 40, 0.05)
+    assert reason is not None
+    assert "3/40" in reason  # {1, 2} | {2, 3} = 3, not 4
+    assert "2 unscored" in reason and "2 unpriced" in reason
+    assert cycle_data.too_many_unrankable_reason([1], [2], 100, 0.05) is None  # 2% is fine
+    assert cycle_data.too_many_unrankable_reason([1, 2], [2, 3], 100, 0.05) is None  # 3% too
+    assert cycle_data.too_many_unrankable_reason([], [], 100, 0.05) is None
+
+
+def test_book_candidates_leave_out_unpriced_and_never_call_it_soft() -> None:
+    """An unpriced row is ineligible like an unscored one: no SOFT penalty, no candidate."""
+    rows = [
+        {"asset_id": 1, "veto_rules": ["UNPRICED"], "blended_score": 60.0},
+        {"asset_id": 2, "veto_rules": ["UNPRICED", "BREAK_TREND_200"], "blended_score": 59.0},
+        {"asset_id": 3, "veto_rules": ["BREAK_TREND_200"], "blended_score": 58.0},
+        {"asset_id": 4, "veto_rules": [], "blended_score": 57.0},
+    ]
+    cands = cycle_orchestrator._book_candidates(rows, {i: f"A{i}" for i in range(1, 5)}, {}, {})
+    assert [c.asset_id for c in cands] == [3, 4]
+    assert cands[0].veto == "SOFT" and cands[1].veto == "none"
+
+
+def test_an_unpriced_member_is_ineligible_and_marked_without_a_veto_row(
+    cycle_seed: Database,
+) -> None:
+    """The whole path: ineligible this cycle, marked UNPRICED, no veto row, never selected."""
+    conn = cycle_seed
+    conn.execute("DELETE FROM price_observation WHERE asset_id = 5 AND obs_date = '2026-06-30'")
+    conn.commit()
+    settings = _settings(conn).model_copy(update={"unscored_max_share": 0.5})
+    report = run_selection(settings, "2026-06-30", conn=conn)
+
+    assert report.unpriced == 1 and report.unpriced_tickers == ["EEE"]
+    row = conn.execute(
+        "SELECT vetoed, selected, veto_rules_json FROM v_cycle_ranking WHERE ticker = 'EEE'"
+    ).fetchone()
+    assert row["vetoed"] == 1 and row["selected"] == 0
+    assert json.loads(row["veto_rules_json"]) == ["UNPRICED"]
+    # a data gap is never a veto row: EEE's rows, if any, are catalog rules, never a marker
+    rule_ids = {r["rule_id"] for r in conn.execute("SELECT rule_id FROM veto WHERE asset_id = 5")}
+    assert "UNSCORED" not in rule_ids and "UNPRICED" not in rule_ids
+    catalog = {r["rule_id"] for r in conn.execute("SELECT rule_id FROM rule_catalog")}
+    assert rule_ids <= catalog
+    detail = json.loads(
+        conn.execute(
+            "SELECT detail_json FROM cycle_checkpoint WHERE cycle_run_id = ? AND step = 'rank'",
+            (report.cycle_run_id,),
+        ).fetchone()["detail_json"]
+    )
+    assert detail["unpriced"] == 1 and detail["unscored"] == 0
+
+
+def test_allow_stale_prices_does_not_switch_the_rule_off(cycle_seed: Database) -> None:
+    """A run past the observations leaves every member unpriced, and the flag does not exempt
+    them: the cohort refuses (D4)."""
+    conn = cycle_seed
+    settings = _settings(conn).model_copy(
+        update={"unscored_max_share": 0.05, "allow_stale_prices": True}
+    )
+    with pytest.raises(TooManyUnscored, match=r"5/5.*100\.0%.*5 unpriced"):
+        run_monitoring(settings, "2026-12-31", conn=conn)
+
+
+def test_the_cli_prints_the_two_gaps_separately(capsys: pytest.CaptureFixture[str]) -> None:
+    _print_unscored(
+        CycleReport(
+            1,
+            "SELECTION",
+            "2026-06-30",
+            unscored=1,
+            unscored_tickers=["AAA"],
+            unpriced=2,
+            unpriced_tickers=["BBB", "CCC"],
+        )
+    )
+    out = capsys.readouterr().out
+    assert "1 unscored (ineligible): AAA" in out
+    assert "2 unpriced (ineligible, no close on the session): BBB, CCC" in out
+
+
+def test_a_held_name_that_becomes_unpriced_closes_its_replay_stint(cycle_seed: Database) -> None:
+    """D5: the target book drops it, sync_replay_positions closes the stint at the cycle date,
+    and no price is invented for the close."""
+    conn = cycle_seed
+    settings = _settings(conn).model_copy(update={"unscored_max_share": 0.5})
+    run_replay(settings, "2026-06-30", conn=conn)
+    held = [
+        str(r["ticker"])
+        for r in conn.execute(
+            "SELECT a.ticker FROM portfolio_position_replay p JOIN assets a ON a.id = p.asset_id "
+            "WHERE p.valid_to IS NULL ORDER BY a.ticker"
+        )
+    ]
+    assert held, "the first replay date must hold a book"
+    victim = conn.execute("SELECT id FROM assets WHERE ticker = ?", (held[0],)).fetchone()["id"]
+    conn.execute(
+        "DELETE FROM price_observation WHERE asset_id = ? AND obs_date = '2026-07-01'", (victim,)
+    )
+    conn.commit()
+    report = run_replay(settings, "2026-07-01", conn=conn)
+    assert held[0] in report.unpriced_tickers
+    stint = conn.execute(
+        "SELECT valid_from, valid_to, cost_basis FROM portfolio_position_replay "
+        "WHERE asset_id = ? ORDER BY id DESC LIMIT 1",
+        (victim,),
+    ).fetchone()
+    assert (stint["valid_from"], stint["valid_to"]) == ("2026-06-30", "2026-07-01")
+    # every newly opened stint has a real close, never a carried or zero price
+    for row in conn.execute(
+        "SELECT p.cost_basis FROM portfolio_position_replay p WHERE p.valid_from = '2026-07-01'"
+    ):
+        assert row["cost_basis"] is not None
+
+
+def test_a_manifest_refusal_names_the_field_that_differs(cycle_seed: Database) -> None:
+    """T-153 part 3c's decision 1b: the refusal names the manifest field, not just the tag."""
+    conn = cycle_seed
+    run_selection(_settings(conn), "2026-06-30", conn=conn)
+    # a run recorded before part 3c: its manifest has no `eligibility`, and its tag is not this
+    # code's -- exactly what a pre-3c database holds, so it cannot be re-run under the new rule
+    conn.execute(
+        "UPDATE cycle_run SET params_json = json_remove("
+        "json_set(params_json, '$.manifest_tag', 'pre-3c'), '$.manifest.eligibility') "
+        "WHERE cycle_type = 'SELECTION' AND cycle_date = '2026-06-30'"
+    )
+    conn.commit()
+    with pytest.raises(ManifestMismatch, match=r"manifest field that differs: eligibility"):
+        run_selection(_settings(conn), "2026-06-30", conn=conn)

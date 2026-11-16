@@ -1,0 +1,174 @@
+{
+  "note": "The gateway's own corrections (EDGAR data), as the payload returned them: the rows the gateway nulled (corrected = null). PHM 10-Q 0000822416-23-000042 (the revenue row in four columns) and Agilent 10-K 0001090872-22-000026 (the cash row twice in one column: the beginning and the ending balance).",
+  "payloads": {
+    "PHM 10-Q 2023Q3": {
+      "accession": "0000822416-23-000042",
+      "cik": "0000822416",
+      "form": "10-Q",
+      "filing_year": 2023,
+      "corrections": [
+        {
+          "statement": "income_statement",
+          "concept": "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+          "column": "2023-09-30 (Q3)",
+          "original": 4003533000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "income_statement",
+          "concept": "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+          "column": "2022-09-30 (Q3)",
+          "original": 3895062000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "income_statement",
+          "concept": "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+          "column": "2023-09-30 (YTD)",
+          "original": 11767926000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "income_statement",
+          "concept": "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+          "column": "2022-09-30 (YTD)",
+          "original": 10924333000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "cash_flow",
+          "concept": "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+          "column": "2023-09-30 (YTD)",
+          "original": 1094553000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "cash_flow",
+          "concept": "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+          "column": "2022-09-30 (YTD)",
+          "original": 1833565000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "cash_flow",
+          "concept": "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+          "column": "2023-09-30 (YTD)",
+          "original": 1899561000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "cash_flow",
+          "concept": "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+          "column": "2022-09-30 (YTD)",
+          "original": 291398000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        }
+      ]
+    },
+    "Agilent 10-K FY2022": {
+      "accession": "0001090872-22-000026",
+      "cik": "0001090872",
+      "form": "10-K",
+      "filing_year": 2022,
+      "corrections": [
+        {
+          "statement": "cash_flow",
+          "concept": "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+          "column": "2022-10-31 (FY)",
+          "original": 1490000000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "cash_flow",
+          "concept": "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+          "column": "2021-10-31 (FY)",
+          "original": 1447000000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "cash_flow",
+          "concept": "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+          "column": "2020-10-31 (FY)",
+          "original": 1388000000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "cash_flow",
+          "concept": "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+          "column": "2022-10-31 (FY)",
+          "original": 1056000000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "cash_flow",
+          "concept": "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+          "column": "2021-10-31 (FY)",
+          "original": 1490000000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "cash_flow",
+          "concept": "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+          "column": "2020-10-31 (FY)",
+          "original": 1447000000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "cash_flow",
+          "concept": "us-gaap_IncreaseDecreaseInOtherAccountsPayableAndAccruedLiabilities",
+          "column": "2022-10-31 (FY)",
+          "original": 26000000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "cash_flow",
+          "concept": "us-gaap_IncreaseDecreaseInOtherAccountsPayableAndAccruedLiabilities",
+          "column": "2021-10-31 (FY)",
+          "original": 27000000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        },
+        {
+          "statement": "cash_flow",
+          "concept": "us-gaap_IncreaseDecreaseInOtherAccountsPayableAndAccruedLiabilities",
+          "column": "2020-10-31 (FY)",
+          "original": -1000000.0,
+          "corrected": null,
+          "rule": "T-042",
+          "reason": "no_filed_nondimensional_fact"
+        }
+      ]
+    }
+  }
+}

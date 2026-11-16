@@ -71,7 +71,9 @@ def test_the_parent_s_revenue_net_income_and_total_assets_are_the_consolidated_o
     duke: Statements,
 ) -> None:
     assert duke.get("revenue", FY) == 30_357_000_000.0
-    assert duke.get("net_income", FY) == 4_614_000_000.0
+    # ID-03 (T-148): parent earnings, "Net Income Attributable to Duke Energy Corporation" -- not
+    # ProfitLoss, 4,614M, which includes 90M of noncontrolling interests
+    assert duke.get("net_income", FY) == 4_524_000_000.0
     assert duke.get("net_income_to_common", FY) == 4_402_000_000.0
     assert duke.get("total_assets", BALANCE) == 186_343_000_000.0
 

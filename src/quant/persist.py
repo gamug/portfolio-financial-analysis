@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
@@ -26,9 +27,13 @@ from quant.db import (
     insert_risk_model,
     load_book_weights,
     load_covariance,
+    load_cycle_run,
+    load_cycle_selected_ids,
     load_expected_returns,
+    load_panel_asset_ids,
     load_previous_book,
     load_risk_model,
+    load_risk_model_by_id,
     load_sector_of,
     sync_positions,
 )
@@ -39,7 +44,20 @@ from quant.factors import (
 )
 from quant.manifest import QuantManifest, resolve_quant_manifest
 from quant.objective import ObjectiveContext, objective_param, resolve_objectives
-from quant.optimize import Constraints, efficient_frontier, min_variance
+from quant.optimize import (
+    Constraints,
+    OptResult,
+    efficient_frontier,
+    ensemble,
+    equal_weight,
+    hierarchical_risk_parity,
+    max_diversification,
+    min_cvar,
+    min_variance,
+    project_onto_caps,
+    risk_parity_slsqp,
+    volatility_timing,
+)
 from quant.panel import ReturnPanel, build_return_panel
 from quant.rates import load_risk_free
 from quant.risk import (
@@ -48,6 +66,7 @@ from quant.risk import (
     historical_mean,
     james_stein_mean,
     ledoit_wolf_covariance,
+    psd_violation,
     sample_covariance,
 )
 from quant.state import fail_run, finish_run, merge_run_params, open_run
@@ -270,6 +289,7 @@ def run_build_risk_model(
                 min_history_days=settings.min_history_days,
                 universe_asset_ids=gate.asset_ids,
                 return_engine_version=manifest.return_engine_version,
+                min_coverage=settings.min_coverage,
             )
             sigma, delta = _covariance(settings, panel)
             rf = load_risk_free(settings, as_of=as_of, conn=conn)
@@ -657,6 +677,573 @@ def run_optimize(  # noqa: PLR0915 - one linear orchestration, like run_build_ri
             manifest_tag=manifest.book_tag,
             stale_prices_bypassed=stale_reason,
             dirty_tree_bypassed=dirty_reason,
+        )
+    finally:
+        if owns:
+            conn.close()
+
+
+# -- the backtest's Top-30 book (BACKTEST_SPEC §8.2) --------------------------
+
+TOPN_SELECTION_COUNT = 30  # BACKTEST_SPEC §0: the Top-N arms, fixed for the backtest
+TOPN_KIND = "min_var_topn"
+#: Phase 1 §1.5: the MARKOWITZ_CORE_FILTER book (the whole eligible PIT panel as the pool).
+MCF_KIND = "min_var_mcf"
+
+
+class CycleSelectionError(ValueError):
+    """The cycle run / risk-model pair cannot define the Top-30 book (a user-input or integrity
+    error; the CLI prints it and exits 1)."""
+
+
+@dataclass
+class TopnBookResult:
+    portfolio_id: int
+    model_id: int
+    as_of: str
+    cycle_run_id: int | None
+    kind: str
+    n_positions: int
+    status: str
+    weight_sum: float
+    pool_size: int = TOPN_SELECTION_COUNT
+    first_pass_n: int = 0
+    second_pass: bool = False
+    satellite_weighting: str = "minvar"
+    rp_names: int = 0
+    rp_max_weight: float | None = None
+    rp_max_min_rrc: float | None = None
+    weighting: dict[str, Any] | None = None
+
+
+def _topn_selection(
+    conn: Database,
+    cycle_run_id: int,
+    as_of: str,
+    model: Row,
+    expected_count: int = TOPN_SELECTION_COUNT,
+) -> list[int]:
+    """The *expected_count* unique names ``cycle_ranking.selected = 1`` of run *cycle_run_id*.
+
+    Checked against the cycle run (stored, completed, dated *as_of*) and against *model*'s asset
+    set. ``expected_count`` is the round-3 candidate pool (30/60/100); 30 is the v1/v2 path.
+    """
+    cycle = load_cycle_run(conn, cycle_run_id)
+    if cycle is None:
+        raise CycleSelectionError(f"cycle run {cycle_run_id} is not stored")
+    if str(cycle["status"]) != "completed":
+        raise CycleSelectionError(
+            f"cycle run {cycle_run_id} is {cycle['status']}, not completed: its ranking is not "
+            "a selection to size a book on"
+        )
+    if str(cycle["cycle_date"]) != as_of:
+        raise CycleSelectionError(
+            f"cycle run {cycle_run_id} is dated {cycle['cycle_date']}, not the analysis date "
+            f"{as_of}"
+        )
+    selected = load_cycle_selected_ids(conn, cycle_run_id)
+    if len(set(selected)) != len(selected):
+        raise CycleSelectionError(
+            f"cycle run {cycle_run_id} repeats an asset id among its selected rows"
+        )
+    if len(selected) != expected_count:
+        raise CycleSelectionError(
+            f"cycle run {cycle_run_id} selected {len(selected)} asset(s); the pool needs "
+            f"exactly {expected_count}"
+        )
+    panel = set(load_panel_asset_ids(model))
+    outside = sorted(set(selected) - panel)
+    if outside:
+        shown = ", ".join(str(a) for a in outside[:10])
+        more = f" (+{len(outside) - 10} more)" if len(outside) > 10 else ""  # noqa: PLR2004
+        raise CycleSelectionError(
+            f"risk model {int(model['id'])} does not cover {len(outside)} selected asset(s): "
+            f"{shown}{more}"
+        )
+    return selected
+
+
+def _book_result(  # noqa: PLR0913 - one constructed result
+    name: str,
+    weights: np.ndarray,
+    sigma: np.ndarray,
+    constraints: Constraints,
+    *,
+    projected: bool,
+    solver: str,
+    elapsed: float = 0.0,
+) -> OptResult:
+    vector = np.asarray(weights, dtype=np.float64)
+    variance = float(vector @ sigma @ vector)
+    return OptResult(
+        weights=vector,
+        asset_ids=list(constraints.asset_ids or range(vector.size)),
+        expected_return=None,
+        expected_vol=float(np.sqrt(variance)) if variance > 0.0 else 0.0,
+        sharpe=None,
+        objective=name,
+        solver=solver,
+        status="optimal",
+        solve_time_s=elapsed,
+        projected=projected,
+    )
+
+
+def _projected_book(  # noqa: PLR0913, PLR0917 - one method's raw vector and its caps
+    name: str,
+    raw: np.ndarray,
+    sigma: np.ndarray,
+    constraints: Constraints,
+    solver: str,
+    elapsed: float,
+) -> OptResult:
+    projected = project_onto_caps(raw, constraints, solver)
+    moved = not np.allclose(projected, raw, atol=1e-12, rtol=0.0)
+    return _book_result(
+        name, projected, sigma, constraints, projected=moved, solver=solver, elapsed=elapsed
+    )
+
+
+def _scenario_returns(  # noqa: PLR0913, PLR0917 - the panel's inputs, all named
+    conn: Database,
+    settings: QuantSettings,
+    manifest: QuantManifest,
+    as_of: str,
+    asset_ids: list[int],
+    scenarios: str = "simple",
+) -> np.ndarray:
+    """The risk model's own 756-session return window, restricted to *asset_ids*.
+
+    ``build_return_panel`` is the builder the risk model itself used: the same calendar,
+    coverage gate, one-day-gap fill and residual zero-fill. Every id is already in the
+    model's panel, so restricting to them keeps every column.
+
+    ``scenarios`` selects the units the min-CVaR LP reads (Phase 1 §1.2): ``simple`` converts
+    the stored log total returns with ``expm1`` because Rockafellar & Uryasev's loss is linear
+    in simple returns; ``log`` keeps the stored series for the correction ladder only.
+    Covariance estimation never reads this panel.
+    """
+    if scenarios not in ("simple", "log"):
+        raise CycleSelectionError(f"cvar_scenarios must be 'simple' or 'log', got {scenarios!r}")
+    panel = build_return_panel(
+        conn,
+        as_of=as_of,
+        lookback_days=settings.lookback_days,
+        min_history_days=settings.min_history_days,
+        universe_asset_ids=asset_ids,
+        return_engine_version=manifest.return_engine_version,
+        min_coverage=settings.min_coverage,
+    )
+    if panel.asset_ids != sorted(asset_ids):
+        raise CycleSelectionError(
+            "the CVaR scenario panel lost a name the risk model holds: "
+            f"{sorted(set(asset_ids) - set(panel.asset_ids))}"
+        )
+    return np.expm1(panel.returns) if scenarios == "simple" else panel.returns
+
+
+def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orchestration
+    settings: QuantSettings,
+    *,
+    as_of: str,
+    cycle_run_id: int | None,
+    risk_model_id: int,
+    pool_size: int = TOPN_SELECTION_COUNT,
+    satellite_weighting: str = "minvar",
+    cvar_scenarios: str = "simple",
+    universe_pool: bool = False,
+    conn: Database | None = None,
+) -> TopnBookResult:
+    """Min-variance over the 30 names a cycle run selected, on a stored risk model's covariance.
+
+    BACKTEST_SPEC §2 step 5 / §8.2: the universe is ``cycle_ranking.selected = 1`` of run
+    ``cycle_run_id`` (read by SQL; ``quant`` never imports ``cycle``), the covariance is the
+    model's stored ``[T, T]`` sub-matrix -- **no re-estimation** -- and the book is persisted as
+    ``kind = 'min_var_topn'`` so it never collides with the plain ``min_var`` book of the same
+    as-of. The caps are today's (name ``1.5 / n_held``, sector 0.30) and there is no turnover cap.
+
+    Everything that makes the pair invalid is refused *before* a run row is written: a stored,
+    completed cycle run dated *as_of*; exactly 30 unique ids, all inside the model's panel; the
+    model dated *as_of* and built on this run's manifest (metric version, return series, and the
+    hard-veto choice when widened); a stored covariance that is PSD within tolerance (the
+    optimizer would otherwise silently repair it).
+    """
+    if settings.turnover_cap is not None:
+        raise CycleSelectionError(
+            "the Top-30 book has no turnover cap (BACKTEST_SPEC §0); drop --turnover-cap"
+        )
+    if not isinstance(pool_size, int) or pool_size < TOPN_SELECTION_COUNT:
+        raise CycleSelectionError(
+            f"pool_size must be an integer >= {TOPN_SELECTION_COUNT}, got {pool_size!r}"
+        )
+    if universe_pool and cycle_run_id is not None:
+        raise CycleSelectionError(
+            "the MARKOWITZ_CORE_FILTER pool is every eligible PIT member: drop --cycle-run-id"
+        )
+    if not universe_pool and cycle_run_id is None:
+        raise CycleSelectionError("the cycle-pool book needs --cycle-run-id")
+    if satellite_weighting not in (
+        "minvar",
+        "rp",
+        "ew",
+        "vt",
+        "maxdiv",
+        "hrp",
+        "mincvar",
+        "ensemble",
+    ):
+        raise CycleSelectionError(
+            f"satellite_weighting must be minvar, rp, ew, vt, maxdiv, hrp, mincvar or "
+            f"ensemble, got {satellite_weighting!r}"
+        )
+    if cvar_scenarios not in ("simple", "log"):
+        raise CycleSelectionError(
+            f"cvar_scenarios must be 'simple' or 'log', got {cvar_scenarios!r}"
+        )
+    owns = conn is None
+    conn = conn or connect(settings.db_path)
+    try:
+        ensure_schema(conn)
+        manifest = resolve_quant_manifest(conn, settings, optimize_as_of=as_of)
+        expected_version = _model_version(settings, manifest)
+        model = load_risk_model_by_id(conn, risk_model_id)
+        if model is None:
+            raise CycleSelectionError(f"risk model {risk_model_id} is not stored")
+        if str(model["as_of"]) != as_of:
+            raise CycleSelectionError(
+                f"risk model {risk_model_id} is as of {model['as_of']}, not {as_of}: the Top-30 "
+                "book must use the model built for its own decision date"
+            )
+        if str(model["model_version"]) != expected_version:
+            raise CycleSelectionError(
+                f"risk model {risk_model_id} was built on different inputs "
+                f"({model['model_version']}) than this run's manifest ({expected_version}); "
+                "rebuild it with the same versions and --include-hard-vetoed, or drop "
+                "--risk-model-id"
+            )
+        ids, sigma_full = load_covariance(conn, risk_model_id)
+        if not ids:
+            raise CycleSelectionError(
+                f"no stored covariance for risk model {risk_model_id}; re-run build-risk-model "
+                "without --no-store-cov"
+            )
+        if universe_pool:
+            # Phase 1 §1.5: the pool is the model's whole panel -- the MARKOWITZ_BASE universe,
+            # hard-vetoed names included (build-risk-model ran with --include-hard-vetoed).
+            selected = [int(asset_id) for asset_id in ids]
+        else:
+            assert cycle_run_id is not None
+            selected = _topn_selection(conn, cycle_run_id, as_of, model, expected_count=pool_size)
+        index = {a: i for i, a in enumerate(ids)}
+        missing = [a for a in selected if a not in index]
+        if missing:
+            raise CycleSelectionError(
+                f"risk model {risk_model_id} stores no covariance for {len(missing)} selected "
+                f"asset(s): {missing[:10]}"
+            )
+
+        rf = (
+            float(model["rf_annual"]) if model["rf_annual"] is not None else settings.risk_free_rate
+        )
+
+        def _solve(assets: list[int]) -> tuple[Any, dict[int, float], Any]:
+            """Min-variance on *assets* with the unchanged caps (V3 plan §2a)."""
+            sigma = sigma_full[np.ix_([index[a] for a in assets], [index[a] for a in assets])]
+            violation = psd_violation(sigma)
+            if violation is not None:
+                raise CycleSelectionError(
+                    f"the stored covariance of risk model {risk_model_id} restricted to the "
+                    f"{len(assets)} names is not positive semidefinite (smallest eigenvalue "
+                    f"-{violation:.3g}): refusing to let the optimizer repair a stored matrix "
+                    "silently"
+                )
+            mu = _expected_return_vector(conn, model, risk_model_id, assets, settings.ret_estimator)
+            sector_of = load_sector_of(conn, assets)
+            caps = effective_caps(settings, assets, sector_of)
+            cons = Constraints(
+                max_name_weight=caps.max_name_weight,
+                min_name_weight=settings.min_name_weight,
+                max_sector_weight=caps.max_sector_weight,
+                sector_of=sector_of,
+                asset_ids=assets,
+            )
+            res = min_variance(sigma, constraints=cons, mu=mu, rf=rf, solver=settings.solver)
+            held = {
+                assets[i]: float(v) for i, v in enumerate(res.weights) if abs(float(v)) > _W_EPS
+            }
+            return res, held, caps
+
+        res, held, caps = _solve(selected)
+        first_pass_n = len(held)
+        second_pass = first_pass_n > TOPN_SELECTION_COUNT
+        if second_pass:
+            # V3 plan §2a: keep the 30 largest (ties: lower asset id) and re-solve on those 30.
+            keep = sorted(held, key=lambda asset_id: (-held[asset_id], asset_id))[
+                :TOPN_SELECTION_COUNT
+            ]
+            res, held, caps = _solve(keep)
+        rp_record: dict[str, Any] | None = None
+        weighting_record: dict[str, Any] = {
+            "method": satellite_weighting,
+            "names": len(held),
+            "max_weight": max(held.values()) if held else 0.0,
+            "projected": False,
+        }
+        if satellite_weighting != "minvar":
+            # Final-round §3: weight the minvar-held set S with the chosen method, under the
+            # same caps the min-variance second pass used (effective_caps over S).
+            held_ids = sorted(held)
+            method_sigma = sigma_full[
+                np.ix_([index[a] for a in held_ids], [index[a] for a in held_ids])
+            ]
+            method_sector = load_sector_of(conn, held_ids)
+            caps = effective_caps(settings, held_ids, method_sector)
+            method_constraints = Constraints(
+                max_name_weight=caps.max_name_weight,
+                min_name_weight=settings.min_name_weight,
+                max_sector_weight=caps.max_sector_weight,
+                sector_of=method_sector,
+                asset_ids=held_ids,
+            )
+            started = time.perf_counter()
+            minvar_vector = np.asarray([held[a] for a in held_ids], dtype=np.float64)
+            solver = settings.solver
+            if satellite_weighting == "rp":
+                try:
+                    res = risk_parity_slsqp(method_sigma, constraints=method_constraints)
+                except ValueError as exc:
+                    raise CycleSelectionError(f"risk parity did not converge: {exc}") from exc
+            elif satellite_weighting == "ew":
+                res = _projected_book(
+                    "equal_weight",
+                    equal_weight(len(held_ids)),
+                    method_sigma,
+                    method_constraints,
+                    solver,
+                    time.perf_counter() - started,
+                )
+            elif satellite_weighting == "vt":
+                res = _projected_book(
+                    "volatility_timing",
+                    volatility_timing(method_sigma, eta=1.0),
+                    method_sigma,
+                    method_constraints,
+                    solver,
+                    time.perf_counter() - started,
+                )
+            elif satellite_weighting == "maxdiv":
+                res = max_diversification(
+                    method_sigma, constraints=method_constraints, solver=solver
+                )
+            elif satellite_weighting == "hrp":
+                res = _projected_book(
+                    "hrp",
+                    hierarchical_risk_parity(
+                        method_sigma, constraints=method_constraints, solver=solver
+                    ).weights,
+                    method_sigma,
+                    method_constraints,
+                    solver,
+                    time.perf_counter() - started,
+                )
+            elif satellite_weighting == "mincvar":
+                scenarios = _scenario_returns(
+                    conn, settings, manifest, as_of, held_ids, cvar_scenarios
+                )
+                res = min_cvar(
+                    scenarios,
+                    method_sigma,
+                    beta=0.95,
+                    constraints=method_constraints,
+                    solver=solver,
+                )
+            elif satellite_weighting == "ensemble":
+                components = [
+                    minvar_vector,
+                    project_onto_caps(equal_weight(len(held_ids)), method_constraints, solver),
+                    project_onto_caps(
+                        volatility_timing(method_sigma, eta=1.0), method_constraints, solver
+                    ),
+                    max_diversification(
+                        method_sigma, constraints=method_constraints, solver=solver
+                    ).weights,
+                    hierarchical_risk_parity(
+                        method_sigma, constraints=method_constraints, solver=solver
+                    ).weights,
+                    min_cvar(
+                        _scenario_returns(
+                            conn, settings, manifest, as_of, held_ids, cvar_scenarios
+                        ),
+                        method_sigma,
+                        beta=0.95,
+                        constraints=method_constraints,
+                        solver=solver,
+                    ).weights,
+                    risk_parity_slsqp(method_sigma, constraints=method_constraints).weights,
+                ]
+                averaged = ensemble(components)
+                if np.any(averaged < -_W_EPS):
+                    raise CycleSelectionError("the ensemble average has a negative weight")
+                total = float(averaged.sum())
+                if not np.isfinite(total) or total <= 0.0:
+                    raise CycleSelectionError("the ensemble average does not sum to one")
+                averaged = averaged / total
+                if (
+                    caps.max_name_weight is not None
+                    and float(averaged.max()) > caps.max_name_weight + 1e-7
+                ):
+                    raise CycleSelectionError("the ensemble average violates the name cap")
+                sectors: dict[int, list[int]] = {}
+                for position, asset_id in enumerate(held_ids):
+                    sector = method_sector.get(int(asset_id))
+                    if sector is not None:
+                        sectors.setdefault(int(sector), []).append(position)
+                if caps.max_sector_weight is not None:
+                    for members in sectors.values():
+                        if float(averaged[members].sum()) > caps.max_sector_weight + 1e-7:
+                            raise CycleSelectionError("the ensemble average violates a sector cap")
+                res = _book_result(
+                    "ensemble",
+                    averaged,
+                    method_sigma,
+                    method_constraints,
+                    projected=False,
+                    solver="average",
+                    elapsed=time.perf_counter() - started,
+                )
+            else:  # pragma: no cover - validated by the CLI and the caller
+                raise CycleSelectionError(f"unknown satellite_weighting {satellite_weighting!r}")
+            method_weights = {
+                held_ids[i]: float(w) for i, w in enumerate(res.weights) if float(w) > _W_EPS
+            }
+            if satellite_weighting == "rp":
+                contributions = [
+                    method_weights[asset_id]
+                    * float(np.dot(method_sigma[i], np.asarray(res.weights, dtype=float)))
+                    for i, asset_id in enumerate(held_ids)
+                    if asset_id in method_weights
+                ]
+                total = float(sum(contributions))
+                count = len(contributions)
+                relative = [count * value / total for value in contributions] if total > 0 else []
+                rp_record = {
+                    "names": len(method_weights),
+                    "max_weight": max(method_weights.values()) if method_weights else 0.0,
+                    "max_min_rrc": (
+                        max(relative) / min(relative)
+                        if len(relative) > 1 and min(relative) > 0.0
+                        else None
+                    ),
+                }
+            held = method_weights
+            weighting_record = {
+                "method": satellite_weighting,
+                "names": len(held),
+                "max_weight": max(held.values()) if held else 0.0,
+                "projected": bool(res.projected),
+            }
+
+        stale_reason = stale_as_of_reason(conn, as_of)
+        cv = code_version()
+        dirty_reason = dirty_tree_reason(cv)
+        ignored = [o for o in settings.objectives if o != "min_var"]
+        run_id = open_run(
+            conn,
+            "optimize",
+            as_of=as_of,
+            params={
+                **settings.model_dump(mode="json"),
+                "manifest": manifest.record(),
+                "manifest_tag": manifest.book_tag,
+                "stale_as_of_bypassed": stale_reason,
+                "dirty_tree_bypassed": dirty_reason,
+                "cycle_run_id": cycle_run_id,
+                "risk_model_id": risk_model_id,
+                "selection_count": len(selected),
+                "pool_mode": "universe" if universe_pool else "cycle",
+                "objectives_ignored": ignored,
+            },
+            code_version=cv,
+        )
+        try:
+            if dirty_reason is not None and not settings.allow_dirty:
+                raise DirtyTree(  # noqa: TRY301
+                    f"{dirty_reason}; pass --allow-dirty for a deliberate run from an "
+                    "uncommitted tree"
+                )
+            if stale_reason is not None and not settings.allow_stale_prices:
+                raise StaleAsOf(  # noqa: TRY301
+                    f"{stale_reason}; pass --allow-stale-prices for a deliberate run ahead "
+                    "of the price spine"
+                )
+            book_params: dict[str, Any] = {
+                **caps.record(),
+                "ret_estimator": settings.ret_estimator,
+                "cycle_run_id": cycle_run_id,
+                "cycle_date": as_of,
+                "selection_count": len(selected),
+                "pool_mode": "universe" if universe_pool else "cycle",
+                "pool_size": len(selected) if universe_pool else pool_size,
+                "first_pass_n": first_pass_n,
+                "second_pass": second_pass,
+                "final_n": len(held),
+                "satellite_weighting": satellite_weighting,
+                "rp": rp_record,
+                "weighting": None if satellite_weighting == "minvar" else weighting_record,
+                "risk_model_id": risk_model_id,
+                "turnover": {
+                    "cap_requested": None,
+                    "cap_effective": None,
+                    "applied": False,
+                    "reason_not_applied": "the Top-30 book has no turnover cap (BACKTEST_SPEC §0)",
+                },
+                "objectives_ignored": ignored,
+            }
+            pid = insert_portfolio(
+                conn,
+                PortfolioRow(
+                    as_of=as_of,
+                    kind=MCF_KIND if universe_pool else TOPN_KIND,
+                    objective=res.objective,
+                    solver=res.solver,
+                    status=res.status,
+                    expected_return=res.expected_return,
+                    expected_vol=res.expected_vol,
+                    sharpe=res.sharpe,
+                    rf_annual=rf,
+                    n_positions=int((np.abs(res.weights) > _W_EPS).sum()),
+                    engine_version=book_engine_version(settings, manifest),
+                    turnover=None,
+                    target_param=None,
+                    model_id=risk_model_id,
+                    quant_run_id=run_id,
+                    manifest_json=_book_manifest_json(manifest, settings),
+                    params_json=json.dumps(book_params, separators=(",", ":")),
+                ),
+            )
+            sync_positions(conn, pid, as_of, held)
+            finish_run(conn, run_id)
+        except BaseException as exc:  # an interrupt too: never leave 'running'
+            conn.rollback()  # drop uncommitted writes: fail_run commits
+            fail_run(conn, run_id, str(exc))
+            raise
+        return TopnBookResult(
+            portfolio_id=pid,
+            model_id=risk_model_id,
+            as_of=as_of,
+            cycle_run_id=cycle_run_id,
+            kind=MCF_KIND if universe_pool else TOPN_KIND,
+            n_positions=len(held),
+            status=res.status,
+            weight_sum=float(sum(held.values())),
+            pool_size=len(selected) if universe_pool else pool_size,
+            first_pass_n=first_pass_n,
+            second_pass=second_pass,
+            satellite_weighting=satellite_weighting,
+            rp_names=len(held) if satellite_weighting == "rp" else 0,
+            rp_max_weight=(max(held.values()) if satellite_weighting == "rp" and held else None),
+            rp_max_min_rrc=(rp_record["max_min_rrc"] if rp_record is not None else None),
+            weighting=weighting_record if satellite_weighting != "minvar" else None,
         )
     finally:
         if owns:

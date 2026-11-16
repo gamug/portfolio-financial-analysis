@@ -9,10 +9,13 @@ never the label (T-140) -- see :func:`completed_units`.
 
 from __future__ import annotations
 
+import ast
+import itertools
 import json
 import math
+import statistics
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -20,11 +23,21 @@ from portfolio_common.db import Database, Row
 
 import kg_schema
 from fundamental_agent import fiscal
+from fundamental_agent.applicability import profile_for_period
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
-from fundamental_agent.statements import REGISTRY, CoverShares, Statements
-from kg_schema import identity
+from fundamental_agent.statements import (
+    EBIT_DERIVED_INPUT,
+    PRIOR_ANNUAL_INVENTORY_FLAG,
+    REGISTRY,
+    Capital,
+    CoverShares,
+    Statements,
+)
+from kg_schema import cover_audit, identity, migrations, ticker_history
+from kg_schema.company_profile import profile_as_of
 from kg_schema.queries import UniverseMember
 from kg_schema.trading_calendar import available_from
+from kg_schema.versions import RULE_INPUT_GROUP, VALUE_INPUTS_METRIC
 
 # Candidate XBRL scale/decimals-tagging defects: a filer (or, per SEC OSD staff
 # guidance, the tagging tool it used) reports a share count off by an exact
@@ -67,8 +80,53 @@ _CROSS_ITEM_BAND = 1.25
 # 2021Q1-2023Q3 revenue, and every ratio over it, changes from missing (or a $0 component) to a
 # value; and a 10-Q's fiscal quarter is read from the fiscal year end, not the gateway's tag, so
 # a 52/53-week filer's quarters stop sharing (or leaving unstored) a label.
+# ``metrics-v6`` (T-148, part 1 of 2): line items are read in the sign they were filed in
+# (ID-11/ID-12: the displayed value times edgartools' ``preferred_sign``), so income tax, cost of
+# goods, interest expense and capex change sign where they were displayed negated, and the ``abs()``
+# repairs are gone; concepts are chosen by precedence (exact concepts in the spec's order, then
+# ``standard``, then label: ID-02a), parent net income is ``NetIncomeLoss`` or ``ProfitLoss`` less
+# the noncontrolling interest and never the "available to common" line (ID-03, N13), income tax is
+# the total or current + deferred (ID-02b), debt follows MET-07 / D-01 / D-06(d) / N23 and a
+# missing debt or cash leaves EV and ROIC empty instead of 0 (MET-00), and a balance sheet is read
+# only at its period end (N6). Part 2 keeps ``metrics-v6`` (no non-scratch database is built between
+# the two PRs).
+# ``metrics-v7`` (T-151 part 1 of 3): the line items gain their sourced component maps. D&A is the
+# filed ``DepreciationDepletionAndAmortization`` / ``DepreciationAndAmortization`` /
+# ``DepreciationAmortizationAndAccretionNet``, else the sum of the filed D&A-nature children of the
+# FASB 2026 cash-flow arc (``Depreciation`` + ``Depletion`` / ``OtherDepreciationAndAmortization`` /
+# ``AmortizationOfIntangibleAssets``), refused when any other D&A-named line is on the face
+# (C1); long-term debt falls back to the filed children of ``LongTermDebtNoncurrent`` (sfp-cls arc)
+# or ``LongTermDebt`` (sfp-dbo arc, flagged ``includes_current_maturities``) -- the REIT
+# ``SecuredDebt`` + ``UnsecuredDebt`` shape resolves -- refused when a debt-named balance-sheet line
+# is outside the tree used (C2); the net capex element
+# ``PaymentsForProceedsFromProductiveAssets`` is read only when filed above zero, a net-proceeds
+# value being skipped for the caption fallback (C3); and a 10-Q's quarter label follows the
+# company's own fiscal year end, overriding a payload balance-sheet instant that disagrees (C4).
+# Every new flag reaches the metrics as ``flag_<item>_<flag>`` inputs, as T-148's do (C6).
+# ``metrics-v8`` (T-156): the D&A resolver reads the income statement when the cash-flow statement
+# files no D&A fact at all (E1, flagged ``da_income_statement``), and the depreciation-only filers
+# recover through the existing sourced sum when its amortization child is on the income statement
+# (E2, flagged ``da_sum_cross_statement``). A company-extension caption equal to the standard label
+# of an accepted D&A element is read through the shared caption fallback (E3, flagged
+# ``caption_fallback`` + ``extension_concept``), and operating income is formed from the FASB 2026
+# ``soi`` calculation identities when its terms are filed (E4, flagged ``oi_from_calc_identity``).
+# ``metrics-v9`` (T-159a): a line item the filing reports under **another standard concept** is
+# read from a substitute, after the item's own concepts (ID-02a precedence, so an item that
+# resolves today resolves to the same value): the receivables, cost of sales, inventory, redeemable
+# NCI, interest expense, minority interest, cash and net income totals, the ASC 320
+# short-term-investment classes (disjoint, so they are summed), the sole member of a component
+# family (inventory), the long-term debt components and the short-term debt lines (MET-07), and
+# the exact two-part sums (D&A = ``Depreciation`` + ``AmortizationOfIntangibleAssets``; pre-tax
+# income = domestic + foreign). The short-term investments the filing reports are no longer read
+# as 0 (the only defaulted input). Flags: ``cogs_excludes_da``, ``net_income_to_common``.
+# ``metrics-v11`` (T-161): a D&A aggregate that equals the filing's ``AmortizationOfIntangibleAssets``
+# for the same period, with ``Depreciation`` filed separately, is that filer's amortization alone,
+# not D&A: the reading becomes ``Depreciation`` + amortization (flagged
+# ``da_amortization_only_sum``), and when the depreciation fact is ambiguous the item is refused
+# (``da_amortization_only_refused``) instead of storing the mixed value. NDSN FY2025: the 10-K's
+# D&A 79,264,000 becomes 150,523,000 and its TTM follows (T-161).
 FACTS_ENGINE_VERSION = "facts-v1"
-METRICS_ENGINE_VERSION = "metrics-v5"
+METRICS_ENGINE_VERSION = "metrics-v11"
 
 
 @dataclass(frozen=True)
@@ -101,8 +159,10 @@ class SnapshotRow:
     filing_id: int
     form: str
     fiscal_period: str
-    score: float
-    rating: str
+    # T-073 (D1): None when an applicable pillar has no value -- the score is empty, the row
+    # records why, and the member is unscored (T-119).
+    score: float | None
+    rating: str | None
     narrative: str
     strengths: Sequence[str]
     risks: Sequence[str]
@@ -110,6 +170,11 @@ class SnapshotRow:
     metrics: dict[str, float | None]
     event_time: str  # the filing's period-end -- what the score is *about*
     prompt_hash: str  # T-113: sha256 of the LLM interaction that produced (or failed into) this
+    # T-073 (D4): the pillar block (`pillars`, `pillar_weights`, `pillar_weights_version`,
+    # `coverage`), stored beside the flat metrics inside `score_snapshot.inputs_json`.
+    pillars: dict[str, Any] = field(default_factory=dict)
+    # A-1.2: the resolved LLM name and its thinking mode/effort, under "llm" in `inputs_json`.
+    llm: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -139,7 +204,7 @@ CREATE TABLE IF NOT EXISTS assets (
 );
 
 CREATE TABLE IF NOT EXISTS sec_filings (
-    id               INTEGER PRIMARY KEY,
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
     asset_id         INTEGER NOT NULL REFERENCES assets(id),
     form             TEXT NOT NULL,
     fiscal_year      INTEGER NOT NULL,
@@ -172,6 +237,11 @@ WHEN NEW.accession_number IS NOT NULL AND EXISTS (
 )
 BEGIN SELECT RAISE(ABORT, 'sec_filings: accession_number already used by another filing of this asset'); END;
 
+-- T-157: `financial_facts` and `fundamental_metrics` are append-only **per version**, and the key
+-- SPEC §5 declares (m002's `filing_version`, m003's `engine_version`) is the shape a fresh database
+-- is born with -- so a new version's rows coexist from the first run, never only after a manual
+-- `migrate`. An older database keeps its narrower key and is rebuilt by m002 / m003 (T-154's guards
+-- unchanged); writing one is refused by `_require_target_key` below, never silently ignored.
 CREATE TABLE IF NOT EXISTS financial_facts (
     id               INTEGER PRIMARY KEY,
     filing_id        INTEGER NOT NULL REFERENCES sec_filings(id) ON DELETE CASCADE,
@@ -181,19 +251,29 @@ CREATE TABLE IF NOT EXISTS financial_facts (
     label            TEXT,
     period_key       TEXT NOT NULL,
     value            REAL,
-    UNIQUE (filing_id, statement, concept, period_key)
+    filing_version   TEXT NOT NULL DEFAULT 'pre-v1',
+    event_time       TEXT NOT NULL DEFAULT '',
+    ingested_at      TEXT,
+    run_id           INTEGER,
+    correction_rule  TEXT,
+    preferred_sign   REAL,
+    UNIQUE (filing_id, statement, concept, period_key, filing_version)
 );
 
 CREATE TABLE IF NOT EXISTS fundamental_metrics (
-    id          INTEGER PRIMARY KEY,
-    filing_id   INTEGER NOT NULL REFERENCES sec_filings(id) ON DELETE CASCADE,
+    id           INTEGER PRIMARY KEY,
+    filing_id    INTEGER NOT NULL REFERENCES sec_filings(id) ON DELETE CASCADE,
     metric_group TEXT NOT NULL,
-    metric_name TEXT NOT NULL,
-    value       REAL,
-    unit        TEXT,
-    inputs_json TEXT,
-    computed_at TEXT NOT NULL,
-    UNIQUE (filing_id, metric_group, metric_name)
+    metric_name  TEXT NOT NULL,
+    value        REAL,
+    unit         TEXT,
+    inputs_json  TEXT,
+    computed_at  TEXT NOT NULL,
+    engine_version TEXT NOT NULL DEFAULT 'pre-v1',
+    event_time   TEXT NOT NULL DEFAULT '',
+    run_id       INTEGER,
+    available_at TEXT,
+    UNIQUE (filing_id, metric_group, metric_name, engine_version)
 );
 
 CREATE TABLE IF NOT EXISTS fundamental_snapshot (
@@ -214,7 +294,7 @@ CREATE TABLE IF NOT EXISTS fundamental_snapshot (
 );
 
 CREATE TABLE IF NOT EXISTS analysis_run (
-    id              INTEGER PRIMARY KEY,
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at      TEXT NOT NULL,
     finished_at     TEXT,
     universe_size   INTEGER,
@@ -256,6 +336,33 @@ def _now() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="seconds")
 
 
+class LegacyAppendOnlyKey(RuntimeError):
+    """A write to an append-only table whose ``UNIQUE`` key is still the pre-migration one.
+
+    ``financial_facts`` and ``fundamental_metrics`` are append-only **per version** (SPEC §5; m002
+    and m003): their key carries ``filing_version`` / ``engine_version``, so a new version's rows
+    coexist with the older ones. A database that predates the rebuild carries the narrower key,
+    where the ``INSERT OR IGNORE`` of a new version's row is dropped **in silence**. T-157 refuses
+    the write instead, naming the migration that rebuilds the table."""
+
+
+def _require_target_key(conn: Database, table: str) -> None:
+    """Refuse to write an append-only table whose key is not the migrations' target (T-157).
+
+    A database :func:`ensure_schema` created is born at the target shape (:data:`SCHEMA` declares it);
+    one created before T-157, or by an older release, is upgraded by
+    ``python -m fundamental_agent migrate`` (m002 / m003 rebuild the table)."""
+    wanted = migrations.target_unique_key(table)
+    if wanted is None or migrations.at_target_unique_key(conn, table):
+        return
+    raise LegacyAppendOnlyKey(
+        f"{table} carries its pre-migration UNIQUE key, narrower than ({', '.join(wanted)}): a row "
+        "of a new version would be dropped in silence by INSERT OR IGNORE. Run `python -m "
+        "fundamental_agent migrate` to rebuild it (m002/m003), or start from a database "
+        "`fundamental_agent run` created."
+    )
+
+
 def ensure_schema(conn: Database) -> None:
     """Create any missing tables and verify a pre-existing ``assets`` is usable."""
     conn.create_schema(SCHEMA)
@@ -275,7 +382,7 @@ def ensure_schema(conn: Database) -> None:
 # -- universe ---------------------------------------------------------------
 
 
-def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> int:
+def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> ticker_history.SyncResult:
     """Insert/update ``assets`` and ``sectors`` from *members* -- the write-once
     identity path where a brand-new S&P 500 symbol first gets its ``assets.id``.
 
@@ -283,12 +390,28 @@ def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> int:
     stored one raises :class:`kg_schema.identity.CikConflict` before anything is written, and a
     stored CIK is never overwritten or emptied (a missing one is filled in).
 
+    A rename is one asset (T-153 part 2): each member is stored under its CIK's line *canonical*
+    symbol (``kg_schema.ticker_history``), so FB and META share one ``assets.id``. A member whose
+    CIK already has an asset under another symbol is a share class (another same-CIK member in
+    this batch), a recorded rename the database predates (adopted in place, returned in the
+    result), or refused (:class:`kg_schema.ticker_history.TickerConflict`) -- before any write.
+
     Point-in-time membership itself is no longer kept here; it is read straight
-    from ``universe.db`` as of the run's ``analysis_date``. Returns the count."""
+    from ``universe.db`` as of the run's ``analysis_date``. Returns the count and any adoptions."""
     members = list(members)
     identity.refuse_cik_changes(conn, members)
+    plans = ticker_history.plan_members(conn, [(m.symbol, m.cik) for m in members])
+    adoptions: list[ticker_history.Adoption] = []
     count = 0
-    for m in members:
+    for m, plan in zip(members, plans, strict=True):
+        if plan.action == "adopt" and plan.asset_id is not None and plan.adopt_from is not None:
+            # C4: retitle the one existing asset of the line -- its id and cik stay unchanged.
+            # Adoption is not only for old databases: every future rename needs it. The ordinary
+            # upsert below then refreshes the member's name/sector like any other member.
+            conn.execute("UPDATE assets SET ticker = ? WHERE id = ?", (plan.ticker, plan.asset_id))
+            adoptions.append(
+                ticker_history.Adoption(plan.adopt_from, plan.ticker, plan.asset_id, str(plan.cik))
+            )
         sector_id = _upsert_sector(conn, m.gics_sector or "")
         conn.execute(
             """
@@ -300,11 +423,17 @@ def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> int:
                 sector_id    = excluded.sector_id,
                 sub_industry = excluded.sub_industry
             """,
-            (m.symbol, m.security, identity.normalize_cik(m.cik), sector_id, m.gics_sub_industry),
+            (
+                plan.ticker,
+                m.security,
+                identity.normalize_cik(m.cik),
+                sector_id,
+                m.gics_sub_industry,
+            ),
         )
         count += 1
     conn.commit()
-    return count
+    return ticker_history.SyncResult(count, adoptions)
 
 
 def _upsert_sector(conn: Database, name: str) -> int | None:
@@ -464,17 +593,21 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
 ) -> int:
     """Append facts for *filing_id* -- never delete. Re-runs of the same
     *filing_version* collide on the unique key and are ignored; a restatement under
-    a new *filing_version* coexists (post-``migrate``; pre-``migrate`` the older
-    unique key still wins, which is the documented limitation).
+    a new *filing_version* coexists. The key is the one SPEC §5 declares (m002's
+    ``filing_version``): a database born by :func:`ensure_schema` has it, and one that
+    still carries the pre-migration key is refused (:class:`LegacyAppendOnlyKey`,
+    T-157) rather than silently dropping the new version's rows.
 
     T-118: a *fact* carrying ``correction_rule`` (set by
     :func:`fundamental_agent.statements.iter_facts` from the gateway's own
     ``data["corrections"]``) is persisted with that rule id in the like-named
     column, so a value the gateway derived rather than returned as filed never
     lands in ``financial_facts`` indistinguishable from a real filed fact."""
+    _require_target_key(conn, "financial_facts")
     columns = conn.table_columns("financial_facts")
     has_versioned = "filing_version" in columns
     has_correction = "correction_rule" in columns
+    has_sign = "preferred_sign" in columns
     now = _now()
     rows = [
         (
@@ -490,10 +623,21 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
             now,
             run_id,
             fact.get("correction_rule"),
+            fact.get("preferred_sign"),
         )
         for fact in facts
     ]
-    if has_versioned and has_correction:
+    if has_versioned and has_correction and has_sign:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO financial_facts
+                (filing_id, statement, concept, standard_concept, label, period_key, value,
+                 filing_version, event_time, ingested_at, run_id, correction_rule, preferred_sign)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+    elif has_versioned and has_correction:
         conn.executemany(
             """
             INSERT OR IGNORE INTO financial_facts
@@ -501,7 +645,7 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
                  filing_version, event_time, ingested_at, run_id, correction_rule)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            rows,
+            [r[:12] for r in rows],
         )
     elif has_versioned:
         conn.executemany(
@@ -549,8 +693,75 @@ def insert_cover_shares(
         """,
         rows,
     )
+    cover_audit.correct_filing_covers(conn, filing_id)  # D-20: a count EDGAR's page contradicts
     conn.commit()
     return len(rows)
+
+
+#: T-159c round 2: the cover-count flag is only the x1,000 / x1/1,000 defect, and it is measured
+#: against the **median** of the class's counts in the company's up-to-4 prior filings (filed
+#: strictly before). Within 10 % of either factor. A stored flag only -- the MKT guard stays the
+#: value rule, so the market cap is unchanged.
+_COVER_SCALE_TOLERANCE = 0.10
+_COVER_SCALE_FACTORS = (1_000.0, 0.001)
+_COVER_PRIOR_FILINGS = 4
+
+
+def cover_share_scale_suspect(
+    conn: Database,
+    asset_id: int,
+    shares: Iterable[CoverShares],
+    *,
+    filing_id: int,
+    filing_date: str | None,
+) -> bool:
+    """Whether one of *shares* is within 10 % of x1,000 (or x1/1,000) the same class's **median**
+    count in the company's up-to-4 prior filings (T-159c round 2). Point in time: only filings
+    filed strictly before *filing_date* count. A stored flag for the reader; it never changes a
+    value (the MKT guard decides the cap)."""
+    entries = [entry for entry in shares if entry.value > 0]
+    if not entries or not filing_date:
+        return False
+    rows = conn.execute(
+        """
+        SELECT fcs.filing_id, fcs.class_member, fcs.value
+        FROM filing_cover_shares fcs
+        JOIN sec_filings sf ON sf.id = fcs.filing_id
+        JOIN sec_filings cur ON cur.id = ?
+        WHERE sf.asset_id = ?
+          AND fcs.filing_id != ?
+          AND sf.filing_date IS NOT NULL
+          AND sf.filing_date < cur.filing_date
+          AND fcs.value > 0
+        ORDER BY sf.filing_date DESC, sf.period_end DESC, fcs.id DESC
+        """,
+        (filing_id, asset_id, filing_id),
+    ).fetchall()
+    prior: dict[str, list[float]] = {}
+    seen: dict[str, set[int]] = {}
+    for row in rows:
+        member = str(row["class_member"])
+        prior_filing = int(row["filing_id"])
+        if (
+            len(seen.setdefault(member, set())) >= _COVER_PRIOR_FILINGS
+            and prior_filing not in seen[member]
+        ):
+            continue
+        seen[member].add(prior_filing)
+        prior.setdefault(member, []).append(float(row["value"]))
+    for entry in entries:
+        values = prior.get(entry.class_member)
+        if not values:
+            continue
+        median = statistics.median(values)
+        if median <= 0:
+            continue
+        ratio = entry.value / median
+        if any(
+            abs(ratio / factor - 1.0) <= _COVER_SCALE_TOLERANCE for factor in _COVER_SCALE_FACTORS
+        ):
+            return True
+    return False
 
 
 def overlapping_history(
@@ -626,6 +837,10 @@ _TTM_FLOW_SOURCE: dict[str, tuple[str, str]] = {
     "depreciation_amortization": ("leverage", "net_debt_to_ebitda"),
     "interest_expense": ("leverage", "interest_coverage"),
     "stock_based_compensation": ("valuation", "free_cash_flow_yield"),
+    # F1 (T-151 part 2 fix 1): the roic group's effective_tax_rate row carries both on the filing's
+    # own period, so a REIT's TTM rate can be built the way the other TTM flows are.
+    "income_tax": ("roic", "effective_tax_rate"),
+    "pretax_income": ("roic", "effective_tax_rate"),
 }
 
 
@@ -719,6 +934,63 @@ def _recorded_input(
     return float(value)
 
 
+def _ebit_derived_at(conn: Database, filing_id: int, engine_version: str) -> bool | None:
+    """D-17 (audit round #11): whether the operating income a filing recorded was derived (its TTM anchor row carries
+    :data:`~fundamental_agent.statements.EBIT_DERIVED_INPUT`), ``None`` when the filing has no such row."""
+    group, name = _TTM_FLOW_SOURCE["operating_income"]
+    row = conn.execute(
+        """
+        SELECT inputs_json FROM fundamental_metrics
+        WHERE filing_id = ? AND metric_group = ? AND metric_name = ? AND engine_version = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (filing_id, group, name, engine_version),
+    ).fetchone()
+    if row is None:
+        return None
+    return bool(json.loads(row["inputs_json"] or "{}").get(EBIT_DERIVED_INPUT) == 1.0)
+
+
+def _quarter_filings(
+    conn: Database, asset_id: int, period_end: str, engine_version: str
+) -> list[int]:
+    """D-17: the filings the three quarters before *period_end* are read from, as :func:`_quarter_flow_ending` reads
+    them -- a quarter's 10-Q, else the 10-K of its fiscal year and the third quarter's 10-Q (FY less the nine months,
+    PER-05), or the year's three 10-Qs when that 10-Q recorded no nine months."""
+    out: list[int] = []
+    for k in (1, 2, 3):
+        end = _months_before(period_end, _QUARTER_MONTHS * k)
+        quarter = _filing_near(conn, asset_id, "10-Q", end)
+        if quarter is not None:
+            out.append(quarter[0])
+            continue
+        fiscal_year = _filing_near(conn, asset_id, "10-K", end)
+        if fiscal_year is None:
+            continue
+        out.append(fiscal_year[0])
+        nine = _nine_month_ytd(conn, asset_id, fiscal_year[1], "operating_income", engine_version)
+        months_read = (
+            (_QUARTER_MONTHS,)
+            if nine is not None
+            else (_QUARTER_MONTHS * 3, _QUARTER_MONTHS * 2, _QUARTER_MONTHS)
+        )
+        for months in months_read:
+            q = _filing_near(conn, asset_id, "10-Q", _months_before(fiscal_year[1], months))
+            if q is not None:
+                out.append(q[0])
+    return out
+
+
+def _ebit_method_differs(
+    conn: Database, filing_id: int, engine_version: str, derived_now: bool
+) -> bool:
+    """D-17: whether *filing_id* recorded its operating income by the other method -- never for a filing that
+    recorded no anchor row (it supplied no term)."""
+    recorded = _ebit_derived_at(conn, filing_id, engine_version)
+    return recorded is not None and recorded != derived_now
+
+
 def _quarter_flow_ending(
     conn: Database,
     asset_id: int,
@@ -770,6 +1042,194 @@ def _nine_month_ytd(
     return _recorded_ytd(conn, third[0], item, engine_version)
 
 
+def _quarter_columns(
+    conn: Database, asset_id: int, period_end: str
+) -> tuple[tuple[str, str | None, str | None], ...]:
+    """H4: the four quarters a ``quarters`` TTM summed, each ``(label, period_end, accession)`` --
+    the filing near each quarter end (a fiscal Q4 comes from the 10-K less the third quarter's nine
+    months, PER-05)."""
+    out: list[tuple[str, str | None, str | None]] = []
+    for k in (0, 1, 2, 3):
+        end = period_end if k == 0 else _months_before(period_end, _QUARTER_MONTHS * k).isoformat()
+        filing = _filing_near(conn, asset_id, "10-Q", date.fromisoformat(end))
+        if filing is None:
+            filing = _filing_near(conn, asset_id, "10-K", date.fromisoformat(end))
+        out.append(
+            (
+                f"quarter_{k}",
+                filing[1] if filing else None,
+                _filing_accession(conn, filing[0]) if filing else None,
+            )
+        )
+    return tuple(out)
+
+
+def _fy_item_concept(conn: Database, filing_id: int, item: str, engine_version: str) -> str | None:
+    """The concept the 10-K's own rows resolved *item* to. The ``_TTM_FLOW_SOURCE`` row first,
+    then any other row of the filing: the source row's provenance does not always list the item
+    (``return_on_assets`` names neither revenue nor net income -- audit F-A11, APP 2025-Q2)."""
+    group, name = _TTM_FLOW_SOURCE[item]
+    rows = conn.execute(
+        "SELECT metric_group, metric_name, inputs_json FROM fundamental_metrics "
+        "WHERE filing_id = ? AND engine_version = ? ORDER BY id DESC",
+        (filing_id, engine_version),
+    ).fetchall()
+    rows = sorted(rows, key=lambda r: (r["metric_group"], r["metric_name"]) != (group, name))
+    for row in rows:
+        if not row["inputs_json"]:
+            continue
+        provenance = json.loads(row["inputs_json"]).get("provenance")
+        if isinstance(provenance, str):
+            try:
+                provenance = ast.literal_eval(provenance)
+            except (ValueError, SyntaxError):
+                continue
+        entries = ((provenance or {}).get("items") or {}).get(item) or []
+        concept = next((e.get("concept") for e in entries if e.get("concept")), None)
+        if concept:
+            return str(concept)
+    return None
+
+
+def _perimeter_mixed(  # noqa: C901, PLR0911, PLR0913, PLR0917 - the identity's parts and the version pin
+    conn: Database,
+    asset_id: int,
+    item: str,
+    pair: YTDPair,
+    fy_filing: int | None,
+    engine_version: str,
+    fy: float,
+    period_end: str,
+) -> bool:
+    """Audit F-A11, without lookahead: the YTD identity's terms come from two perimeters.
+
+    True when (a) this 10-Q's prior-year YTD differs by more than 2 % from the YTD the prior-year
+    10-Q itself reported (the company recast that year), **and** (b) the 10-K that supplies the prior
+    fiscal year did **not** restate its own comparative year (its prior-year column equals the year
+    the previous 10-K reported, within 0.5 %): the recast came after that 10-K, so its FY is still on
+    the old perimeter -- or it did, but a 10-Q of the current year recast again
+    (:func:`_recast_within_year`). With no previous 10-K stored (the first year), (b) cannot be shown
+    and the observed recast decides. No prior-year 10-Q or no comparative column: not called mixed."""
+    if fy_filing is None or pair.prior is None or not pair.prior_end:
+        return False
+    old_q = _filing_near(conn, asset_id, "10-Q", date.fromisoformat(pair.prior_end))
+    if old_q is None:
+        return False
+    original = _recorded_ytd(conn, old_q[0], item, engine_version)
+    if original is None or original == 0 or abs(pair.prior - original) <= 0.02 * abs(original):
+        return False
+    if abs(pair.prior - original) < 0.01 * abs(fy):
+        return False  # immaterial against the year (ABNB 2023: thousands -> millions rounding)
+    fy_end = _filing_period_end(conn, fy_filing)
+    if not fy_end:
+        return False
+    previous = _filing_near(conn, asset_id, "10-K", _months_before(fy_end, 12))
+    if previous is None:
+        # the company's first stored year: (b) cannot be tested, and the recast is observed -- the
+        # identity's FY is not shown to be on the new perimeter (audit: 27 mixed / 17 consistent)
+        return True
+    previous_fy = _recorded_flow(conn, previous[0], item, engine_version)
+    if previous_fy is None or previous_fy == 0:
+        return False
+    concept = _fy_item_concept(conn, fy_filing, item, engine_version)
+    if not concept:
+        return False
+    parts = [c.strip() for c in str(concept).split(" + ")]
+    comparative = 0.0
+    found = set()
+    for fact in conn.execute(
+        "SELECT concept, value FROM financial_facts WHERE filing_id = ? AND period_key = ?",
+        (fy_filing, f"{previous[1]} (FY)"),
+    ):
+        if fact["concept"] in parts and fact["concept"] not in found and fact["value"] is not None:
+            found.add(fact["concept"])
+            comparative += float(fact["value"])
+    if found != set(parts):
+        return False
+    if abs(abs(comparative) - abs(previous_fy)) <= 0.005 * abs(previous_fy):
+        return True
+    # the 10-K restated its comparative year -- for a change up to the 10-K. A recast a later 10-Q
+    # of the same year shows (GE's Vernova spin after the GEHC-restated FY2023 10-K) is not in it.
+    return _recast_within_year(conn, asset_id, fy_end, period_end, parts, fy)
+
+
+def _period_sum(conn: Database, filing_id: int, key: str, parts: list[str]) -> float | None:
+    values: dict[str, float] = {}
+    for fact in conn.execute(
+        "SELECT concept, value FROM financial_facts WHERE filing_id = ? AND period_key = ?",
+        (filing_id, key),
+    ):
+        if fact["concept"] in parts and fact["concept"] not in values and fact["value"] is not None:
+            values[fact["concept"]] = float(fact["value"])
+    return sum(values.values()) if len(values) == len(parts) else None
+
+
+def _recast_within_year(  # noqa: PLR0913, PLR0917 - the identity's parts
+    conn: Database, asset_id: int, fy_end: str, period_end: str, parts: list[str], fy: float
+) -> bool:
+    """Audit F-A11, no lookahead: whether a 10-Q of the current fiscal year (after the 10-K) recast
+    the prior year again. For each two consecutive 10-Qs after the fiscal year end, up to and
+    including this one (its facts are stored before its metrics), the later one's prior-year YTD
+    minus its prior-year quarter is the prior-year YTD through the earlier quarter on the later
+    basis; it must equal what the earlier 10-Q itself showed (within 2 %, or under 1 % of the year).
+    Measured on the audit's labelled TTMs: 21 mixed found, 0 of 409 consistent flagged."""
+    chain = [
+        int(r["id"])
+        for r in conn.execute(
+            "SELECT id FROM sec_filings WHERE asset_id = ? AND form = '10-Q' "
+            "AND period_end > ? AND period_end <= ? ORDER BY period_end",
+            (asset_id, fy_end, period_end),
+        ).fetchall()
+    ]
+    for earlier, later in itertools.pairwise(chain):
+        keys1 = sorted(
+            k
+            for k in _period_keys(conn, earlier)
+            if k[:10] <= fy_end and k.endswith(("(YTD)", "(Q1)"))
+        )
+        keys2 = _period_keys(conn, later)
+        ytd2 = sorted(k for k in keys2 if k.endswith("(YTD)") and k[:10] <= fy_end)
+        if not keys1 or not ytd2:
+            continue
+        q2 = sorted(
+            k
+            for k in keys2
+            if "(" in k and not k.endswith(("(YTD)", "(FY)")) and keys1[-1][:10] < k[:10] <= fy_end
+        )
+        if not q2:
+            continue
+        a = _period_sum(conn, earlier, keys1[-1], parts)
+        b = _period_sum(conn, later, ytd2[-1], parts)
+        c = _period_sum(conn, later, q2[-1], parts)
+        if a is None or b is None or c is None or a == 0:
+            continue
+        implied = b - c
+        if abs(implied - a) > 0.02 * abs(a) and abs(implied - a) >= 0.01 * abs(fy):
+            return True
+    return False
+
+
+def _period_keys(conn: Database, filing_id: int) -> list[str]:
+    return [
+        str(r["period_key"])
+        for r in conn.execute(
+            "SELECT DISTINCT period_key FROM financial_facts WHERE filing_id = ?", (filing_id,)
+        ).fetchall()
+    ]
+
+
+def _filing_period_end(conn: Database, filing_id: int) -> str | None:
+    row = conn.execute("SELECT period_end FROM sec_filings WHERE id = ?", (filing_id,)).fetchone()
+    return str(row["period_end"]) if row and row["period_end"] else None
+
+
+def _filing_accession(conn: Database, filing_id: int) -> str | None:
+    row = conn.execute(
+        "SELECT accession_number FROM sec_filings WHERE id = ?", (filing_id,)
+    ).fetchone()
+    return str(row["accession_number"]) if row and row["accession_number"] else None
+
+
 def _fiscal_year_between(conn: Database, asset_id: int, after: str, before: str) -> int | None:
     """The asset's 10-K whose fiscal year ends strictly between *after* and *before* -- the
     year a prior-year year-to-date column belongs to -- or ``None``."""
@@ -781,7 +1241,7 @@ def _fiscal_year_between(conn: Database, asset_id: int, after: str, before: str)
     return int(row["id"]) if row else None
 
 
-def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the version pin
+def ttm_detail(  # noqa: C901, PLR0912, PLR0913 - the filing's identity, its flows, the version pin; one branch per method
     conn: Database,
     asset_id: int,
     *,
@@ -789,6 +1249,8 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
     current: dict[str, float],
     ytd: dict[str, YTDPair] | None = None,
     engine_version: str = METRICS_ENGINE_VERSION,
+    accession: str | None = None,
+    derived: frozenset[str] = frozenset(),
 ) -> dict[str, TTMFlow]:
     """Each flow's trailing-twelve-month value on a 10-Q, by the first method that works:
 
@@ -804,7 +1266,11 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
     the filing's own restated comparative, so it survives a restated prior year that the
     as-filed quarters do not (AT&T's WarnerMedia spin-off, see
     :func:`fundamental_agent.quality.record_ttm_crosscheck`). Every recorded value read is of
-    *engine_version* only."""
+    *engine_version* only.
+
+    D-17 (audit round #11): *derived* names the items whose value on this filing was derived (the operating income
+    of a filing that prints no operating-income line). The operating income's terms are read by one method: a prior
+    10-K or a prior quarter recorded the other way refuses the TTM (``ttm_ebit_method_mixed``) -- never ``x4``."""
     out: dict[str, TTMFlow] = {}
     for item in sorted(set(current) | set(ytd or {})):
         summed = (
@@ -815,6 +1281,7 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
             else None
         )
         pair = (ytd or {}).get(item)
+        flow_flags: tuple[str, ...] = ()
         if pair and pair.current is not None and pair.prior is not None and pair.prior_end:
             fy_filing = _fiscal_year_between(conn, asset_id, pair.prior_end, period_end)
             fy = (
@@ -822,16 +1289,102 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
                 if fy_filing is not None
                 else None
             )
-            if fy is not None:
+            if fy is not None and _perimeter_mixed(
+                conn, asset_id, item, pair, fy_filing, engine_version, fy, period_end
+            ):
+                # Audit F-A11 (T-161's rule: never store a mixed value): this 10-Q recast its prior
+                # year (a divestiture, discontinued operations) after the 10-K, whose FY still holds
+                # the old perimeter -- FY(old) - YTD(new) + YTD(new) mixes the two.
                 out[item] = TTMFlow(
-                    fy - pair.prior + pair.current, "ytd", alt=summed, ytd=pair.current
+                    0.0, "refused", ytd=pair.current, flags=("ttm_perimeter_change",)
                 )
                 continue
+            if (
+                fy is not None
+                and fy_filing is not None
+                and item == "operating_income"
+                and _ebit_method_differs(conn, fy_filing, engine_version, item in derived)
+            ):
+                out[item] = TTMFlow(
+                    0.0, "refused", ytd=pair.current, flags=("ttm_ebit_method_mixed",)
+                )
+                continue
+            if fy is not None:
+                # H4: the terms and the columns the identity combined, with the accession of the
+                # filing that supplied each (the prior 10-K, then this filing's own two columns).
+                out[item] = TTMFlow(
+                    fy - pair.prior + pair.current,
+                    "ytd",
+                    alt=summed,
+                    ytd=pair.current,
+                    terms=(
+                        ("prior_fiscal_year", fy),
+                        ("prior_ytd", pair.prior),
+                        ("ytd", pair.current),
+                    ),
+                    columns=(
+                        (
+                            "prior_fiscal_year",
+                            _filing_period_end(conn, fy_filing) if fy_filing else None,
+                            _filing_accession(conn, fy_filing) if fy_filing else None,
+                        ),
+                        ("prior_ytd", f"{pair.prior_end} (YTD)", accession),
+                        ("ytd", f"{period_end} (YTD)", accession),
+                    ),
+                )
+                continue
+            if item == "depreciation_amortization" and fy_filing is not None:
+                p_flag = _recorded_input(
+                    conn,
+                    fy_filing,
+                    item,
+                    "flag_depreciation_amortization_depreciation_only_not_da",
+                    engine_version,
+                )
+                if p_flag == 1.0:
+                    flow_flags = ("depreciation_only_not_da",)
+                else:
+                    # T-161: the prior 10-K's D&A was the amortization alone and could not be
+                    # sourced (two different Depreciation facts): never combine the mixed value.
+                    p_flag = _recorded_input(
+                        conn,
+                        fy_filing,
+                        item,
+                        "flag_depreciation_amortization_da_amortization_only_refused",
+                        engine_version,
+                    )
+                    if p_flag == 1.0:
+                        flow_flags = ("da_amortization_only_refused",)
         ytd_now = pair.current if pair else None
+        quarters = _quarter_columns(conn, asset_id, period_end)
+        if (
+            summed is not None
+            and item == "operating_income"
+            and any(
+                _ebit_method_differs(conn, filing, engine_version, item in derived)
+                for filing in _quarter_filings(conn, asset_id, period_end, engine_version)
+            )
+        ):
+            out[item] = TTMFlow(
+                0.0,
+                "refused",
+                ytd=ytd_now,
+                flags=("ttm_ebit_method_mixed",),
+                columns=tuple(quarters),
+            )
+            continue
         if summed is not None:
-            out[item] = TTMFlow(summed, "quarters", ytd=ytd_now)
+            out[item] = TTMFlow(
+                summed, "quarters", ytd=ytd_now, flags=flow_flags, columns=tuple(quarters)
+            )
         elif item in current:
-            out[item] = TTMFlow(current[item] * 4.0, "x4", ytd=ytd_now)
+            out[item] = TTMFlow(
+                current[item] * 4.0, "x4", ytd=ytd_now, flags=flow_flags, columns=tuple(quarters)
+            )
+        elif flow_flags:
+            out[item] = TTMFlow(
+                0.0, "refused", ytd=ytd_now, flags=flow_flags, columns=tuple(quarters)
+            )
     return out
 
 
@@ -1095,7 +1648,11 @@ def record_metrics(  # noqa: PLR0913 - keyword-only provenance fields
 ) -> None:
     """Append computed metrics -- one immutable row per
     ``(filing_id, group, name, engine_version)``. Recomputing with the same
-    *engine_version* is a no-op; a new version writes a parallel row."""
+    *engine_version* is a no-op; a new version writes a parallel row. The key is the one
+    SPEC §5 declares (m003's ``engine_version``): a database born by :func:`ensure_schema` has it, and
+    one that still carries the pre-migration key is refused (:class:`LegacyAppendOnlyKey`, T-157)
+    rather than silently dropping the new version's rows."""
+    _require_target_key(conn, "fundamental_metrics")
     now = _now()
     available_at = filing_available_at(conn, filing_id)
     has_versioned = "engine_version" in conn.table_columns("fundamental_metrics")
@@ -1264,9 +1821,49 @@ def completed_accessions(conn: Database) -> set[str]:
     return {str(r["accession"]) for r in rows}
 
 
+def metrics_only_accessions(conn: Database) -> set[str]:
+    """Accessions whose filing a **metrics-only** run completed (T-143 part A, P1).
+
+    ``completed_accessions`` is keyed on the FUNDAMENTAL ``score_snapshot`` a scored run writes,
+    so it never names a metrics-only filing. A filing counts as done here only when its own
+    writing run recorded ``metrics_only`` **and** its ``value_inputs`` rule input exists: that row
+    is written after ``record_metrics`` and ``utility_coverage.write`` (``pipeline._analyze_one``),
+    so a filing killed before the sequence finished (facts and metrics stored, its ``value_inputs``
+    row not) is not done and a later metrics-only run resumes it (reviewer B, 2026-10-18). A normal
+    run ignores this set -- its skip sets stay FUNDAMENTAL-keyed -- so it still scores every such
+    filing."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT f.accession_number AS accession, r.params_json AS params
+        FROM sec_filings f
+        JOIN analysis_run r ON r.id = f.run_id
+        JOIN fundamental_metrics m
+            ON m.filing_id = f.id AND m.metric_group = ? AND m.metric_name = ?
+        WHERE f.accession_number IS NOT NULL
+        """,
+        (RULE_INPUT_GROUP, VALUE_INPUTS_METRIC),
+    ).fetchall()
+    out: set[str] = set()
+    for row in rows:
+        try:
+            params = json.loads(row["params"] or "{}")
+        except ValueError:
+            continue
+        if isinstance(params, dict) and params.get("metrics_only") is True:
+            out.add(str(row["accession"]))
+    return out
+
+
 def insert_snapshot(conn: Database, row: SnapshotRow, *, run_id: int | None = None) -> None:
     """Append one immutable FUNDAMENTAL ``score_snapshot`` row. Resume-safe:
-    a repeat ``(asset_id, 'FUNDAMENTAL', event_time)`` is ignored."""
+    a repeat ``(asset_id, 'FUNDAMENTAL', event_time)`` is ignored.
+
+    ``inputs_json`` carries the flat metrics (``group.metric`` -> value) and, from T-073, the
+    pillar block beside them (D4) -- no schema change."""
+    inputs: dict[str, Any] = dict(row.metrics)
+    inputs.update(row.pillars)
+    if row.llm:
+        inputs["llm"] = row.llm
     conn.execute(
         """
         INSERT INTO score_snapshot
@@ -1283,7 +1880,7 @@ def insert_snapshot(conn: Database, row: SnapshotRow, *, run_id: int | None = No
             row.event_time,
             _now(),
             row.model,
-            json.dumps(row.metrics),
+            json.dumps(inputs),
             row.filing_id,
             row.rating,
             row.narrative,
@@ -1362,3 +1959,201 @@ def finish_run(conn: Database, run_id: int, *, status: str) -> None:
         (_now(), status, run_id),
     )
     conn.commit()
+
+
+def is_equity_reit(conn: Database, asset_id: int) -> bool:
+    """M4 predicate (D6), read from the company profile (T-071 part 1, APP-00).
+
+    The profile's ``reit`` overlay, keyed by the asset's CIK (APP-10a) -- the one source every
+    package reads for the type. An asset whose CIK has no profile is ``False``, never a guessed type.
+    The GICS predicate this replaces (sector ``Real Estate`` and a sub-industry ending in ``REITs``)
+    is how the profile's own ``reit`` column was derived, and the two agree on every pilot asset
+    (measured in T-071 part 1)."""
+    row = conn.execute("SELECT cik FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    if not row or not row["cik"]:
+        return False
+    profile = profile_as_of(str(row["cik"]))
+    return bool(profile and profile.reit)
+
+
+# -- the prior-year capital and the company profile (MET-01/02, MD-02/35/38; T-151 part 2) ---------
+
+_FACTS_SELECT_HAS_SIGN = (
+    "SELECT statement, concept, label, standard_concept, period_key, value, preferred_sign "
+    "FROM financial_facts WHERE filing_id = ? ORDER BY id"
+)
+_FACTS_SELECT = (
+    "SELECT statement, concept, label, standard_concept, period_key, value, NULL AS preferred_sign "
+    "FROM financial_facts WHERE filing_id = ? ORDER BY id"
+)
+
+
+def statements_from_facts(conn: Database, filing_id: int) -> Statements:
+    """Rebuild a :class:`Statements` from the stored ``financial_facts`` of one filing (the
+    pipeline's own reader; ``scripts/sec_xcheck/common.py`` has an equivalent for the audit
+    scripts). ``financial_facts`` stores no abstract or dimensional rows, so the rebuilt payload
+    carries one row per ``(statement, concept)`` -- enough to resolve every balance-sheet item
+    :func:`prior_capital` reads."""
+    has_sign = "preferred_sign" in conn.table_columns("financial_facts")
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in conn.execute(_FACTS_SELECT_HAS_SIGN if has_sign else _FACTS_SELECT, (filing_id,)):
+        row = rows.setdefault(
+            (r["statement"], r["concept"]),
+            {
+                "concept": r["concept"],
+                "label": r["label"],
+                "standard_concept": r["standard_concept"],
+                "abstract": False,
+                "dimension": False,
+            },
+        )
+        if r["preferred_sign"] is not None:
+            row.setdefault("preferred_sign", r["preferred_sign"])
+        row.setdefault(r["period_key"], r["value"])
+    payload: dict[str, list[Any]] = {"income_statement": [], "balance_sheet": [], "cash_flow": []}
+    for (statement, _concept), row in rows.items():
+        payload.setdefault(statement, []).append(row)
+    return Statements.from_payload(payload)
+
+
+def company_profile(conn: Database, asset_id: int) -> tuple[str | None, str | None]:
+    """The company's GICS sector and sub-industry (today's snapshot, L-03) -- the fallback for a CIK
+    the company profile does not hold (T-071 part 1 reads the tracked profile first, in
+    :func:`attach_context`)."""
+    row = conn.execute(
+        "SELECT s.name AS sector, a.sub_industry FROM assets a "
+        "LEFT JOIN sectors s ON a.sector_id = s.id WHERE a.id = ?",
+        (asset_id,),
+    ).fetchone()
+    if not row:
+        return None, None
+    return (row["sector"] or None, row["sub_industry"] or None)
+
+
+def _filing_with_period_end(
+    conn: Database, asset_id: int, form: str, target: date
+) -> tuple[int, str] | None:
+    """The stored *form* filing of *asset_id* whose period end rounds to the same month end as
+    *target* (PER-08), and that period end."""
+    rows = conn.execute(
+        "SELECT id, period_end FROM sec_filings "
+        "WHERE asset_id = ? AND form = ? AND period_end IS NOT NULL ORDER BY period_end",
+        (asset_id, form),
+    ).fetchall()
+    for row in rows:
+        period_end = str(row["period_end"])
+        try:
+            parsed = date.fromisoformat(period_end[:10])
+        except ValueError:
+            continue
+        if fiscal.same_period_end(parsed, target):
+            return int(row["id"]), period_end
+    return None
+
+
+def _capital_from_stored(
+    conn: Database, asset_id: int, form: str, target: date | None
+) -> Capital | None:
+    """Capital at the balance-sheet column of the stored *form* filing ending on *target* (a
+    different filing's own facts), or ``None`` when there is no such filing."""
+    if target is None:
+        return None
+    found = _filing_with_period_end(conn, asset_id, form, target)
+    if found is None:
+        return None
+    filing_id, period_end = found
+    prior = statements_from_facts(conn, filing_id)
+    return replace(
+        prior.capital_at(period_end), source="prior_10k" if form == "10-K" else "prior_10q"
+    )
+
+
+def prior_capital(
+    conn: Database, asset_id: int, form: str, period_key: str, stmts: Statements
+) -> None:
+    """Resolve and attach the prior-year capital a filing's ratios divide by (T-151 part 2):
+
+    * ``stmts.prior_capital`` -- the end of the prior fiscal year (MET-01/MET-02, MD-02/35): the
+      filing's own comparative column when it carries one (D1 step 1), else the stored prior 10-K's
+      balance sheet (step 2), else empty (flagged ``prior_year_bs_missing``, step 3);
+    * ``stmts.prior_quarter_capital`` -- the prior year's same quarter (MD-38's Δ, a 10-Q; D8),
+      from the stored prior-year 10-Q. ``None`` for a 10-K.
+
+    Only the pipeline calls this: it reads another filing's stored facts, which a hermetic
+    ``Statements`` does not have."""
+    try:
+        target = date.fromisoformat(period_key[:10])
+    except ValueError:
+        return
+    own_key = stmts.prior_fiscal_year_end_key(period_key)
+    if own_key is not None:
+        stmts.prior_capital = replace(stmts.capital_at(own_key), source="filing")
+    else:
+        fye = latest_fiscal_year_end(conn, asset_id, period_key[:10])
+        target_date = date.fromisoformat(fye[:10]) if fye else None
+        stmts.prior_capital = _capital_from_stored(conn, asset_id, "10-K", target_date) or (
+            stmts.capital_at(None)
+        )
+    if form == "10-Q":
+        stmts.prior_quarter_capital = _capital_from_stored(
+            conn, asset_id, "10-Q", fiscal.one_year_before(target)
+        )
+
+
+def prior_annual_inventory(
+    conn: Database, asset_id: int, period_end: str, engine_version: str = METRICS_ENGINE_VERSION
+) -> bool:
+    """D-18 (audit round #11): whether the company's previous 10-K (period end before *period_end*) recorded an
+    inventory -- its quick-ratio row carries an ``inventory`` above 0, or was itself refused D-18's zero for this
+    reason. A 10-Q silent on inventory proves nothing when the last annual report showed one (ORCL's and UNH's 10-Ks
+    disclose it in the notes, their 10-Qs do not)."""
+    row = conn.execute(
+        """
+        SELECT m.inputs_json FROM fundamental_metrics m JOIN sec_filings f ON f.id = m.filing_id
+        WHERE f.asset_id = ? AND f.form = '10-K' AND f.period_end < ? AND m.metric_group = 'liquidity'
+          AND m.metric_name = 'quick_ratio' AND m.engine_version = ?
+        ORDER BY f.period_end DESC, m.id DESC
+        LIMIT 1
+        """,
+        (asset_id, period_end, engine_version),
+    ).fetchone()
+    if row is None or not row["inputs_json"]:
+        return False
+    inputs = json.loads(row["inputs_json"])
+    inventory = inputs.get("inventory")
+    has_value = (
+        isinstance(inventory, (int, float)) and not isinstance(inventory, bool) and inventory > 0
+    )
+    return bool(has_value or inputs.get(PRIOR_ANNUAL_INVENTORY_FLAG))
+
+
+def attach_context(  # noqa: PLR0913 - the filing's identity plus the statements it enriches
+    conn: Database,
+    asset_id: int,
+    form: str,
+    period_key: str,
+    stmts: Statements,
+    *,
+    accession: str | None = None,
+) -> None:
+    """Attach the company profile, the prior-year capital and the filing's accession to *stmts*
+    before its metrics are computed (T-151 parts 2 and 3; T-071 part 1's profile). One call so every
+    entry point (the pipeline and the recompute script) enriches the same way.
+
+    The sector and sub-industry come from the **company profile** (T-071 part 1, APP-00/APP-04c/PER-14:
+    an APP-00 type and a GICS snapshot), falling back to the assets table only for a CIK the profile
+    does not hold -- never a guessed type. The two agree on every pilot asset."""
+    row = conn.execute("SELECT cik FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    cik = str(row["cik"]) if row and row["cik"] else None
+    # D-19: a period ending before the profile's interval reads it at the interval's start.
+    profile = profile_for_period(cik, period_key)[0] if cik else None
+    if profile is not None:
+        stmts.sector = profile.sector
+        stmts.sub_industry = profile.sub_industry
+        # D-18: the APP-00 type itself, which the quick ratio's no-inventory reading needs.
+        stmts.company_type = profile.type
+    else:
+        stmts.sector, stmts.sub_industry = company_profile(conn, asset_id)
+    stmts.accession = accession
+    stmts.prior_annual_inventory = prior_annual_inventory(conn, asset_id, period_key[:10])
+    prior_capital(conn, asset_id, form, period_key, stmts)

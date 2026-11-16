@@ -7,8 +7,9 @@ recreated on every :func:`kg_schema.ensure` call -- they are cheap and always cu
 
 View groups (TOC -- see "Projection semantics" below for the per-view detail)
 -------------------------------------------------------------------------------
-Run log / provenance     v_analysis_run, v_pricing_run, v_quant_run, v_cycle_run
-Universe & coverage      v_universe_membership, v_universe_coverage, v_sector, v_industry
+Run log / provenance     v_analysis_run, v_pricing_run, v_quant_run, v_cycle_run,
+                         v_orchestrator_run, v_orchestrator_step
+Universe & coverage      v_universe_membership, v_ticker_history, v_universe_coverage, v_sector, v_industry
 Scores & signals         v_score_snapshot, v_fundamental_metric, v_sector_aggregate_snapshot
 Pricing & returns        v_price_observation, v_corporate_action, v_quant_return_daily,
                          v_risk_free_rate, v_benchmark_series
@@ -19,10 +20,18 @@ Cycle ranking & weights  v_cycle_ranking, v_cycle_ranking_component, v_weight_sc
                          v_weight_component
 Quant optimization       v_quant_risk_model, v_quant_portfolio, v_quant_position,
                          v_quant_frontier_point, v_quant_benchmark_performance, v_quant_vs_live
+Backtest                 v_book, v_book_rebalance, v_guard_alert, v_guard_action,
+                         v_book_weight_daily, v_book_daily_performance,
+                         v_portfolio_period_summary, v_backtest_test
 
 Projection semantics
 --------------------
-``v_score_snapshot``      one row per (asset, score_type, event_time). ``event_time`` is
+``v_score_snapshot``      one row per (asset, score_type, event_time). **T-153 part 3d:** for a
+                          line the private import priced, a VALORIZATION row's ``inputs_json`` is
+                          NULL (the whole block is built on the market cap) and a FUNDAMENTAL
+                          row's has the five valuation keys removed (its pillars and every other
+                          metric stay). ``raw_value``, ``normalized_score``, ranks and weights are
+                          untouched: the rule keeps scores. ``event_time`` is
                           the filing period-end for FUNDAMENTAL, the cycle date for
                           TECHNICAL / VALORIZATION, and the article-day for SEMANTIC.
                           ``available_at`` is when the row became usable -- the column an
@@ -39,10 +48,20 @@ Projection semantics
                           newest per metric group by explicit version order, never by
                           ``computed_at``); a filing not recomputed under it has no current
                           row. At most one current version per metric group (T-144).
+                          **T-153 part 3d:** ``value`` is NULL for the five ``valuation`` metrics
+                          of a line the private import priced (the row stays) -- a market cap is
+                          the public cover count times the close.
 ``v_universe_membership``  one row per membership stint; ``valid_to IS NULL`` = current.
                           FROZEN: the agents no longer write ``universe_membership``
                           (the universe is read point-in-time from ``universe.db``).
                           Kept for back-compat; new readers should use ``universe.db``.
+``v_ticker_history``      one row per symbol of a company's line (T-153 part 2): the symbol, its
+                          ``valid_from`` / ``valid_to`` (``valid_to`` = the symbol's last day),
+                          the line's ``canonical_symbol`` and the ``asset_id`` of the one asset
+                          the line resolves to. Keyed by CIK -- the same symbol reused by another
+                          CIK later is a different line. ``assets.ticker`` is the line's
+                          canonical (current) symbol, so every other view shows the current
+                          ticker even on a historical row; join this view for the as-of ticker.
 ``v_universe_coverage``   per (as_of, universe, symbol): whether that member had an
                           identity row / FUNDAMENTAL score / metrics / prices /
                           observations / returns as of the date. ``covered`` = every
@@ -53,6 +72,24 @@ Projection semantics
                           ``code_version`` (the code tag that produced the run),
                           status, timings and ``params_json``. ``portfolio-reports``
                           enumerates and traces past runs through these.
+                          In ``v_analysis_run``, the units are:
+                          ``planned_units`` is one per (ticker, form, year) task;
+                          ``completed_units`` and ``skipped_units`` are one per filing
+                          (a 10-Q year task has several filings);
+                          ``failed_units`` is one per failed (ticker, form, year) task
+                          or per failed filing.
+                          Because ``planned_units`` and the other three use different
+                          units, completed_units + skipped_units + failed_units need
+                          not equal planned_units.
+``v_orchestrator_run`` / ``v_orchestrator_step``
+                          the orchestrator's own provenance (T-012), written by
+                          ``api/orchestrator.py``: one row per orchestrated run
+                          (``run_id``, ``kind``, ``as_of``, ``code_version``, ``status``,
+                          ``started_at``, ``finished_at``, ``settings_json``, ``handle``,
+                          ``surface``) and one per step (``orchestrator_run_id``, ``handle``,
+                          ``ordinal``, ``step``, ``status``, timings, ``exit_code``,
+                          ``run_kind``, ``run_id`` -- the step's own run-log id, ``reason``,
+                          ``argv_json``, ``output_tail``). ``GET /run/{handle}`` reads these.
 ``v_sector``              one row per GICS sector with its member-asset and sub-industry
                           counts (the reference lane's rollup anchor).
 ``v_industry``            one row per GICS sub-industry -> sector (the scrape has no
@@ -61,7 +98,11 @@ Projection semantics
                           price analytics only (raw OHLCV stays in ``price_daily``).
                           ``sma_200`` .. ``vol_60d_base`` (T-070, appended) exist from
                           ``priceobs-v2`` and are NULL on a ``priceobs-v1`` row and until their
-                          window is full.
+                          window is full. **T-153 part 3d:** rows whose bar came from the private
+                          Tiingo import (``source='tiingo'``) are **not returned** -- the view is
+                          a price series and the data is never redistributed. An older NULL
+                          ``source`` (every row stored before the import existed) stays
+                          visible: the filter is ``COALESCE(source,'') <> 'tiingo'``.
 ``v_sec_filing``          one row per EDGAR filing (form, fiscal_period, accession,
                           period_end) -- the filing-level parent of ``v_sec_filing_section``.
 ``v_sec_filing_section``   narrative filing text; one row per (filing, section, ordinal).
@@ -81,7 +122,10 @@ Projection semantics
 ``v_rule_catalog``        one row per veto rule (the rule catalog as data). ``params_json``
                           is kept verbatim; ``param_metric`` / ``param_operator`` /
                           ``param_threshold`` unpack the threshold-rule shape when present.
-``v_portfolio_position``   position stints; ``valid_to IS NULL`` = open.
+``v_portfolio_position``   position stints; ``valid_to IS NULL`` = open. **T-153 part 3d:**
+                          ``cost_basis`` is the close the position opened at, so it is NULLed
+                          when that line's prices came from the private Tiingo import; the row
+                          (and its weight) stays.
 ``v_shared_executive_edge``pair-level aggregate of ``shared_executive_edge`` person rows;
                           ``computed_at`` / ``run_id`` are those of the build that wrote them.
 ``v_cycle_ranking``        one row per (``cycle_run``, asset) of EVERY cycle run, whatever its
@@ -94,7 +138,8 @@ Projection semantics
                           the sum of the row's non-null components' weights), so that
                           sum(effective_weight * component_value) - the SOFT-veto penalty =
                           ``blended_score`` (T-144). The penalty is the sum, over the row's SOFT
-                          rules (``veto_rules_json`` entries other than HARD / UNSCORED), of each
+                          rules (``veto_rules_json`` entries other than HARD / UNSCORED /
+                          UNPRICED), of each
                           rule's ``penalty_points`` (``v_rule_catalog.params_json``; the run's
                           ``soft_veto_penalty`` where a rule declares none): 15 for most, 0 for the
                           flag-only ``BREAK_TREND_200`` (T-070), not 15 x their count.
@@ -110,9 +155,17 @@ Projection semantics
                           ``v_score_snapshot``.
 ``v_corporate_action``    one row per (asset, action_type, ex_date) at the latest
                           ``engine_version``. Dividends (cash/share) and splits (ratio).
+                          **T-153 part 3d:** the private import's rows are **not returned**
+                          (``COALESCE(source,'') <> 'tiingo'``) -- the section 4 rule names a
+                          dividend value, so the licence's "-- never a value" applies here too.
+                          ``quant`` reads the table, not this view, so returns do not change.
 ``v_quant_return_daily``  the quant/ total-return daily series; latest ``engine_version``
                           per (asset, obs_date). ``tr_log_return`` is the optimizer input.
-                          Empty until ``quant build-returns`` has run.
+                          Empty until ``quant build-returns`` has run. **T-153 part 3d:** the
+                          ``vendor`` column (appended) names the origin of the close the row was
+                          built from, and rows whose close came from the private Tiingo import
+                          are **not returned** -- a level series reveals the close as much as
+                          the close does.
 ``v_risk_free_rate``      risk-free curve points; latest ``engine_version`` per (curve, date).
 ``v_benchmark_series``    benchmark index levels / returns; latest ``engine_version`` per
                           (benchmark, obs_date).
@@ -156,6 +209,29 @@ Projection semantics
                           dead ``equal_weight`` / ``cap_weight`` filters). ``engine_version`` /
                           ``is_current`` are the book's; a ``LIVE_ONLY`` row has a NULL
                           ``engine_version`` and ``is_current = 1``.
+``v_book`` / ``v_book_rebalance``  one row per strategy book (arm) of a ``backtest_run`` / per
+                          scheduled rebalance of one book: decision and execution dates, the
+                          ``quant_portfolio`` / ``cycle_run`` / ``quant_risk_model`` ids it used.
+``v_guard_alert`` / ``v_guard_action``  the GUARD alerts a run raised (an L3/L4 scale alert has
+                          ``asset_id`` NULL) and the action each book took on it: ``APPLIED``,
+                          ``ARM_DISABLED`` (the NOGUARD twin's shadow alert, never applied),
+                          ``NOT_HELD`` or ``SUPERSEDED``. A layer-1 alert's ``value`` is NULL
+                          (it is a sum of one asset's returns, or its one-day return); its
+                          ``threshold`` and ``state`` stay. An asset-level action's
+                          ``weight_before``/``weight_after`` are NULL; the L3/L4 portfolio
+                          actions keep them.
+``v_book_weight_daily``   the Markowitz target and the final target, exposed only on the book's
+                          decision and execution dates; never a drifted daily weight, a price
+                          or a return. (Daily drifted weights plus the book's daily return
+                          would recover each asset's return.)
+``v_book_daily_performance``  portfolio-level daily gross/net return, turnover, cost, NAV,
+                          drawdown, cash weight and equity count, with the EW benchmark. Never
+                          one asset's return.
+``v_portfolio_period_summary``  per-book, per-segment statistics (P1, P2/P2a/P2b, P3).
+``v_backtest_test``       the paired tests (Memmel-Jobson-Korkie, Ledoit-Wolf bootstrap, HAC) of
+                          two arms of a run. ``knowledge_date`` is the row's own date for dated
+                          rows, the run's creation date for run-level rows and ``date_to`` for a
+                          summary.
 """
 
 from __future__ import annotations
@@ -172,7 +248,24 @@ VIEWS: dict[str, str] = {
     "v_score_snapshot": """
         CREATE VIEW v_score_snapshot AS
         SELECT s.id, a.ticker, s.asset_id, s.score_type, s.raw_value, s.normalized_score,
-               s.event_time, s.computed_at, s.model, s.inputs_json, s.filing_id,
+               s.event_time, s.computed_at, s.model,
+               CASE
+                   WHEN s.score_type = 'VALORIZATION'
+                        AND EXISTS (SELECT 1 FROM price_daily pd
+                                    WHERE pd.asset_id = s.asset_id AND pd.source = 'tiingo')
+                       THEN NULL
+                   WHEN s.score_type = 'FUNDAMENTAL'
+                        AND EXISTS (SELECT 1 FROM price_daily pd
+                                    WHERE pd.asset_id = s.asset_id AND pd.source = 'tiingo')
+                       THEN json_remove(
+                           s.inputs_json,
+                           '$."valuation.market_capitalization"',
+                           '$."valuation.enterprise_value"',
+                           '$."valuation.free_cash_flow_yield"',
+                           '$."valuation.sbc_adjusted_fcf_yield"',
+                           '$."valuation.enterprise_fcf_yield"')
+                   ELSE s.inputs_json END AS inputs_json,
+               s.filing_id,
                s.rating, s.narrative, s.strengths_json, s.risks_json,
                s.run_id, s.run_kind,
                CASE WHEN s.score_type IN ('TECHNICAL', 'VALORIZATION', 'SECTOR')
@@ -217,7 +310,17 @@ VIEWS: dict[str, str] = {
                                       AND v2.engine_version > v.engine_version)))))
         )
         SELECT a.ticker, f.asset_id, m.filing_id, m.metric_group, m.metric_name,
-               m.metric_group || '.' || m.metric_name AS metric_id, m.unit, m.value,
+               m.metric_group || '.' || m.metric_name AS metric_id, m.unit,
+               -- T-153 part 3d: a market cap is the (public) cover count times the close, so a
+               -- valuation value is the close in another form -- NULLed for a line the private
+               -- import priced, from the same per-line predicate the positions view uses.
+               CASE WHEN m.metric_group = 'valuation'
+                         AND m.metric_name IN ('market_capitalization', 'enterprise_value',
+                                               'free_cash_flow_yield', 'sbc_adjusted_fcf_yield',
+                                               'enterprise_fcf_yield')
+                         AND EXISTS (SELECT 1 FROM price_daily pd
+                                     WHERE pd.asset_id = f.asset_id AND pd.source = 'tiingo')
+                       THEN NULL ELSE m.value END AS value,
                m.engine_version,
                CASE WHEN cv.engine_version IS NULL THEN 0 ELSE 1 END AS is_current,
                m.event_time, m.available_at, m.run_id
@@ -232,6 +335,13 @@ VIEWS: dict[str, str] = {
         SELECT m.id, a.ticker, m.asset_id, m.universe, m.valid_from, m.valid_to,
                m.detected_at, m.source, m.run_id, m.run_kind
         FROM universe_membership m JOIN assets a ON a.id = m.asset_id
+    """,
+    "v_ticker_history": """
+        CREATE VIEW v_ticker_history AS
+        SELECT t.cik, t.symbol, t.valid_from, t.valid_to, t.canonical_symbol,
+               a.id AS asset_id, t.evidence_url, t.evidence_date, t.rules
+        FROM ticker_history t
+        LEFT JOIN assets a ON a.cik = t.cik AND a.ticker = t.canonical_symbol
     """,
     "v_analysis_run": """
         CREATE VIEW v_analysis_run AS
@@ -258,6 +368,19 @@ VIEWS: dict[str, str] = {
         SELECT id AS run_id, cycle_type, cycle_date AS as_of, code_version, status,
                started_at, finished_at, params_json
         FROM cycle_run
+    """,
+    "v_orchestrator_run": """
+        CREATE VIEW v_orchestrator_run AS
+        SELECT id AS run_id, kind, as_of, code_version, status, started_at, finished_at,
+               settings_json, handle, surface
+        FROM orchestrator_run
+    """,
+    "v_orchestrator_step": """
+        CREATE VIEW v_orchestrator_step AS
+        SELECT s.orchestrator_run_id, r.handle, s.ordinal, s.step, s.status,
+               s.started_at, s.finished_at, s.exit_code, s.run_kind, s.run_id, s.reason,
+               s.argv_json, s.output_tail
+        FROM orchestrator_step s JOIN orchestrator_run r ON r.id = s.orchestrator_run_id
     """,
     "v_universe_coverage": """
         CREATE VIEW v_universe_coverage AS
@@ -295,6 +418,7 @@ VIEWS: dict[str, str] = {
             WHERE p2.asset_id = p.asset_id AND p2.obs_date = p.obs_date
             ORDER BY p2.computed_at DESC, p2.id DESC LIMIT 1
         )
+          AND COALESCE(p.source, '') <> 'tiingo'
     """,
     "v_sec_filing": """
         CREATE VIEW v_sec_filing AS
@@ -349,7 +473,12 @@ VIEWS: dict[str, str] = {
     "v_portfolio_position": """
         CREATE VIEW v_portfolio_position AS
         SELECT p.id, a.ticker, p.asset_id, p.valid_from, p.valid_to, p.weight,
-               p.cost_basis, p.opened_by_cycle, p.run_id
+               CASE WHEN EXISTS (
+                        SELECT 1 FROM price_daily pd
+                        WHERE pd.asset_id = p.asset_id AND pd.source = 'tiingo'
+                   )
+                    THEN NULL ELSE p.cost_basis END AS cost_basis,
+               p.opened_by_cycle, p.run_id
         FROM portfolio_position p JOIN assets a ON a.id = p.asset_id
     """,
     "v_shared_executive_edge": """
@@ -421,18 +550,21 @@ VIEWS: dict[str, str] = {
               AND c2.ex_date = c.ex_date
             ORDER BY c2.ingested_at DESC, c2.id DESC LIMIT 1
         )
+          AND COALESCE(c.source, '') <> 'tiingo'
     """,
     "v_quant_return_daily": """
         CREATE VIEW v_quant_return_daily AS
         SELECT q.id, a.ticker, q.asset_id, q.obs_date, q.close_split_adj, q.adj_close,
                q.tr_index, q.cash_dividend, q.split_factor, q.price_log_return,
-               q.tr_log_return, q.source, q.engine_version, q.computed_at
+               q.tr_log_return, q.source, q.engine_version, q.computed_at,
+               q.vendor
         FROM quant_return_daily q JOIN assets a ON a.id = q.asset_id
         WHERE q.engine_version = (
             SELECT q2.engine_version FROM quant_return_daily q2
             WHERE q2.asset_id = q.asset_id AND q2.obs_date = q.obs_date
             ORDER BY q2.computed_at DESC, q2.id DESC LIMIT 1
         )
+          AND COALESCE(q.vendor, '') <> 'tiingo'
     """,
     "v_risk_free_rate": """
         CREATE VIEW v_risk_free_rate AS
@@ -541,6 +673,99 @@ VIEWS: dict[str, str] = {
             JOIN quant_position p2 ON p2.portfolio_id = q2.id AND p2.valid_to IS NULL
             WHERE q2.as_of = b.as_of AND p2.asset_id = pp.asset_id
               AND q2.kind <> 'live_book' AND q2.is_current = 1)
+    """,
+    # -- backtest engine (m018, WP-A). Every view carries knowledge_date; no view exposes
+    #    one asset's price or return -- weights, alerts and portfolio aggregates only.
+    "v_book": """
+        CREATE VIEW v_book AS
+        SELECT b.id AS book_id, b.backtest_run_id, r.window_id, r.d_start, r.d_end,
+               r.formation_date, r.status AS run_status, b.arm_code, b.objective,
+               b.exclude_hard_vetoed, b.guard_layers, r.code_version,
+               substr(r.created_at, 1, 10) AS knowledge_date
+        FROM strategy_book b
+        JOIN backtest_run r ON r.id = b.backtest_run_id
+    """,
+    "v_book_rebalance": """
+        CREATE VIEW v_book_rebalance AS
+        SELECT br.id AS rebalance_id, br.book_id, b.backtest_run_id, b.arm_code,
+               br.decision_date, br.execution_date, br.quant_portfolio_id, br.cycle_run_id,
+               br.risk_model_id, br.status,
+               br.execution_date AS knowledge_date
+        FROM book_rebalance br
+        JOIN strategy_book b ON b.id = br.book_id
+    """,
+    "v_guard_alert": """
+        CREATE VIEW v_guard_alert AS
+        SELECT ga.id AS alert_id, ga.backtest_run_id, r.window_id, ga.date, ga.layer,
+               a.ticker, ga.asset_id, ga.rule_id,
+               CASE WHEN ga.layer = 1 THEN NULL ELSE ga.value END AS value,
+               ga.threshold, ga.state,
+               ga.date AS knowledge_date
+        FROM guard_alert ga
+        JOIN backtest_run r ON r.id = ga.backtest_run_id
+        LEFT JOIN assets a ON a.id = ga.asset_id
+    """,
+    "v_guard_action": """
+        CREATE VIEW v_guard_action AS
+        SELECT act.id AS action_id, act.book_id, b.backtest_run_id, b.arm_code,
+               act.alert_id, act.decision_date, act.effective_date,
+               a.ticker, act.asset_id, act.status,
+               CASE WHEN act.asset_id IS NOT NULL THEN NULL ELSE act.weight_before END
+                   AS weight_before,
+               CASE WHEN act.asset_id IS NOT NULL THEN NULL ELSE act.weight_after END
+                   AS weight_after,
+               act.effective_date AS knowledge_date
+        FROM guard_action act
+        JOIN strategy_book b ON b.id = act.book_id
+        LEFT JOIN assets a ON a.id = act.asset_id
+    """,
+    "v_book_weight_daily": """
+        CREATE VIEW v_book_weight_daily AS
+        SELECT w.book_id, b.backtest_run_id, b.arm_code, w.date, w.holding_key, w.asset_id,
+               a.company_name AS holding_name,
+               CASE WHEN EXISTS (
+                   SELECT 1 FROM book_rebalance br
+                   WHERE br.book_id = w.book_id
+                     AND w.date IN (br.decision_date, br.execution_date)
+               ) THEN w.markowitz_target_weight END AS markowitz_target_weight,
+               CASE WHEN EXISTS (
+                   SELECT 1 FROM book_rebalance br
+                   WHERE br.book_id = w.book_id
+                     AND w.date IN (br.decision_date, br.execution_date)
+               ) THEN w.final_target_weight END AS final_target_weight,
+               w.date AS knowledge_date
+        FROM book_weight_daily w
+        JOIN strategy_book b ON b.id = w.book_id
+        LEFT JOIN assets a ON a.id = w.asset_id
+    """,
+    "v_book_daily_performance": """
+        CREATE VIEW v_book_daily_performance AS
+        SELECT p.book_id, b.backtest_run_id, b.arm_code, r.window_id, p.date,
+               p.gross_return, p.turnover, p.cost_return, p.net_return, p.nav, p.drawdown,
+               p.cash_weight, p.n_equity, p.benchmark_return,
+               p.date AS knowledge_date
+        FROM book_daily_performance p
+        JOIN strategy_book b ON b.id = p.book_id
+        JOIN backtest_run r ON r.id = b.backtest_run_id
+    """,
+    "v_portfolio_period_summary": """
+        CREATE VIEW v_portfolio_period_summary AS
+        SELECT s.book_id, b.backtest_run_id, b.arm_code, r.window_id, s.segment,
+               s.date_from, s.date_to, s.cumulative_return, s.annualized_return,
+               s.annualized_vol, s.ex_post_sharpe, s.max_drawdown, s.total_turnover,
+               s.total_cost_bps, s.n_rebalances, s.n_guard_actions,
+               s.date_to AS knowledge_date
+        FROM backtest_summary s
+        JOIN strategy_book b ON b.id = s.book_id
+        JOIN backtest_run r ON r.id = b.backtest_run_id
+    """,
+    "v_backtest_test": """
+        CREATE VIEW v_backtest_test AS
+        SELECT t.backtest_run_id, r.window_id, t.segment, t.arm_a, t.arm_b, t.test,
+               t.statistic, t.p_value, t.n_obs, t.params_json,
+               substr(r.created_at, 1, 10) AS knowledge_date
+        FROM backtest_test t
+        JOIN backtest_run r ON r.id = t.backtest_run_id
     """,
 }
 

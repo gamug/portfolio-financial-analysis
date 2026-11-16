@@ -26,8 +26,12 @@ from fundamental_agent import db
 from fundamental_agent.db import FilingKey, FilingMeta
 from fundamental_agent.metrics.base import MetricResult
 from fundamental_agent.metrics.efficiency import compute as efficiency_compute
+from fundamental_agent.metrics.leverage import compute as leverage_compute
 from fundamental_agent.metrics.profitability import compute as profitability_compute
-from fundamental_agent.statements import Statements
+from fundamental_agent.metrics.roic import compute as roic_compute
+from fundamental_agent.metrics.valuation import compute as valuation_compute
+from fundamental_agent.pricing import ClosePrice
+from fundamental_agent.statements import CoverShares, Statements
 from kg_schema.queries import UniverseMember
 
 
@@ -284,9 +288,12 @@ def _income_row(concept: str, label: str, **periods: float) -> dict:
 def _quarterly_payload(
     *, revenue: float, cogs: float, net_income: float, total_assets: float
 ) -> dict:
-    """A synthetic 10-Q-shaped payload carrying every field ROA/asset_turnover
-    need, so the ratio itself (not just its inputs) is exercisable -- the real
-    MSFT fixture's balance sheet doesn't carry `total_assets` for this period."""
+    """A synthetic 10-Q-shaped payload carrying every field ROA/ROE/asset_turnover need, so the
+    ratio itself (not just its inputs) is exercisable -- the real MSFT fixture's balance sheet
+    doesn't carry `total_assets` for this period. The prior fiscal year end (2024-12-31) is the
+    comparative column MET-01/MET-02 divide by (T-151 part 2); its assets/equity are fixed at
+    400.0 / 100.0, and operating income at 20.0."""
+    operating_income, equity, prior_assets, prior_equity = 20.0, 200.0, 400.0, 100.0
     key = "2024-06-30 (Q3)"
     return {
         "income_statement": [
@@ -297,28 +304,43 @@ def _quarterly_payload(
             ),
             _income_row("us-gaap_CostOfRevenue", "Cost of revenue", **{key: cogs}),
             _income_row("us-gaap_NetIncomeLoss", "Net income", **{key: net_income}),
+            _income_row(
+                "us-gaap_OperatingIncomeLoss", "Operating income", **{key: operating_income}
+            ),
         ],
         "balance_sheet": [
             _income_row("us-gaap_Assets", "Total assets", **{"2024-06-30": total_assets}),
+            _income_row("us-gaap_Assets", "Total assets", **{"2023-12-31": prior_assets}),
+            _income_row("us-gaap_StockholdersEquity", "Equity", **{"2024-06-30": equity}),
+            _income_row("us-gaap_StockholdersEquity", "Equity", **{"2023-12-31": prior_equity}),
         ],
         "cash_flow": [],
     }
 
 
-def test_profitability_compute_uses_ttm_net_income_for_roa_roe_only() -> None:
-    """ROA/ROE pick up the TTM-adjusted net income; net_margin (a flow-over-flow
-    ratio, not flow-over-stock) and the recorded `inputs` stay on the filing's
-    own raw single-quarter value."""
+def test_profitability_compute_uses_ttm_flows_over_the_prior_year_capital() -> None:
+    """ROA (NOPAT) and ROE (parent net income) pick up the TTM-adjusted flows and divide by the
+    capital at the prior fiscal year end (MET-01/MET-02, D1/D2); net_margin (a flow-over-flow
+    ratio, not flow-over-stock) and the recorded `inputs` stay on the filing's own raw
+    single-quarter value."""
     key = "2024-06-30 (Q3)"
     stmts = Statements.from_payload(
         _quarterly_payload(revenue=100.0, cogs=40.0, net_income=10.0, total_assets=500.0)
     )
 
     baseline = {r.name: r for r in profitability_compute(stmts, key)}
-    ttm_results = {r.name: r for r in profitability_compute(stmts, key, None, {"net_income": 40.0})}
+    ttm_results = {
+        r.name: r
+        for r in profitability_compute(
+            stmts, key, None, {"net_income": 40.0, "operating_income": 80.0}
+        )
+    }
 
-    assert baseline["return_on_assets"].value == pytest.approx(10.0 / 500.0)
-    assert ttm_results["return_on_assets"].value == pytest.approx(40.0 / 500.0)
+    # MET-01: ROA = operating income x (1 - 21%) / total assets at the prior fiscal year end
+    assert baseline["return_on_assets"].value == pytest.approx(20.0 * 0.79 / 400.0)
+    assert ttm_results["return_on_assets"].value == pytest.approx(80.0 * 0.79 / 400.0)
+    # MET-02: ROE = parent net income / parent equity at the prior fiscal year end
+    assert ttm_results["return_on_equity"].value == pytest.approx(40.0 / 100.0)
     assert ttm_results["return_on_assets"].inputs["net_income"] == 10.0  # audit trail unchanged
     assert ttm_results["net_margin"].value == baseline["net_margin"].value  # untouched by ttm
 
@@ -335,3 +357,78 @@ def test_efficiency_compute_uses_ttm_revenue_and_cogs() -> None:
 
     assert results["asset_turnover"].value == pytest.approx(400.0 / 500.0)
     assert results["asset_turnover"].inputs["revenue"] == 100.0  # audit trail unchanged
+
+
+def test_per06_quarterly_with_empty_ttm_leaves_all_ttm_ratios_empty() -> None:
+    """PER-06: On a 10-Q where flows were all x4 (real_ttm={}), every TTM-based
+    ratio is None and never falls back to the single-quarter flow."""
+    key = "2024-06-30 (Q3)"
+    stmts = Statements.from_payload(
+        _quarterly_payload(revenue=100.0, cogs=40.0, net_income=10.0, total_assets=500.0)
+    )
+    stmts.cover_shares = [CoverShares(10_000_000.0, "2024-07-15")]
+    price = ClosePrice("2024-06-28", 50.0)
+
+    # Empty TTM (all flows were x4)
+    prof = {r.name: r.value for r in profitability_compute(stmts, key, None, ttm={})}
+    eff = {r.name: r.value for r in efficiency_compute(stmts, key, None, ttm={})}
+    lev = {r.name: r.value for r in leverage_compute(stmts, key, None, ttm={})}
+    roic = {r.name: r.value for r in roic_compute(stmts, key, None, ttm={})}
+    val = {r.name: r.value for r in valuation_compute(stmts, key, price, ttm={})}
+
+    assert prof["return_on_assets"] is None
+    assert prof["return_on_equity"] is None
+    assert eff["asset_turnover"] is None
+    assert eff["receivables_turnover"] is None
+    assert eff["inventory_turnover"] is None
+    assert lev["net_debt_to_ebitda"] is None
+    assert roic["return_on_invested_capital"] is None
+    assert val["free_cash_flow_yield"] is None
+    assert val["enterprise_fcf_yield"] is None
+    assert val["sbc_adjusted_fcf_yield"] is None
+
+
+def test_per06_quarterly_with_real_ttm_computes_ratios() -> None:
+    """PER-06: On a 10-Q with real TTM flows, TTM-based ratios are computed."""
+    key = "2024-06-30 (Q3)"
+    stmts = Statements.from_payload(
+        _quarterly_payload(revenue=100.0, cogs=40.0, net_income=10.0, total_assets=500.0)
+    )
+    ttm = {"net_income": 40.0, "revenue": 400.0, "cogs": 160.0, "operating_income": 80.0}
+    prof = {r.name: r.value for r in profitability_compute(stmts, key, None, ttm=ttm)}
+    eff = {r.name: r.value for r in efficiency_compute(stmts, key, None, ttm=ttm)}
+
+    # MET-01: the TTM NOPAT over the prior fiscal year end (400.0 in the payload)
+    assert prof["return_on_assets"] == pytest.approx(80.0 * 0.79 / 400.0)
+    assert eff["asset_turnover"] == pytest.approx(400.0 / 500.0)
+
+
+def test_per06_annual_10k_unaffected() -> None:
+    """PER-06: On a 10-K (ttm=None), ratios compute from the filing's annual flows."""
+    key = "2024-06-30 (FY)"
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [
+                _income_row(
+                    "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                    "Revenue",
+                    **{key: 100.0},
+                ),
+                _income_row("us-gaap_CostOfRevenue", "Cost of revenue", **{key: 40.0}),
+                _income_row("us-gaap_NetIncomeLoss", "Net income", **{key: 10.0}),
+                _income_row("us-gaap_OperatingIncomeLoss", "Operating income", **{key: 20.0}),
+            ],
+            "balance_sheet": [
+                _income_row("us-gaap_Assets", "Total assets", **{"2024-06-30": 500.0}),
+                # the prior fiscal year end a 10-K carries as its comparative balance sheet
+                _income_row("us-gaap_Assets", "Total assets", **{"2023-06-30": 400.0}),
+            ],
+            "cash_flow": [],
+        }
+    )
+    prof = {r.name: r.value for r in profitability_compute(stmts, key, None, ttm=None)}
+    eff = {r.name: r.value for r in efficiency_compute(stmts, key, None, ttm=None)}
+
+    # MET-01: NOPAT (21% tax) over the prior fiscal year end, not the ending assets
+    assert prof["return_on_assets"] == pytest.approx(20.0 * 0.79 / 400.0)
+    assert eff["asset_turnover"] == pytest.approx(100.0 / 500.0)

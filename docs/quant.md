@@ -637,3 +637,36 @@ migration). What a consumer sees differently:
 - Re-introducing a `QUANTITATIVE` `score_type` is deliberately **not** done — the
   Markowitz output is a portfolio, not a per-asset score, and lives entirely in the
   `quant_*` tables. `score_snapshot` is untouched.
+
+## `pending` (T-017)
+
+`python -m quant pending --analysis-date D` is the orchestrator's one check on the quant chain
+(read-only, one line `pending: yes|no <evidence>`, imports only `kg_schema`). Yes when the returns
+end before the newest member bar, a default objective has no non-live book with `as_of` in
+[last session, D], a book `evaluate` would score lags behind its newest forward return, or the
+pricing gateway lists a dividend/split `corporate_action` lacks (one GET per line). Books with no
+positions are "unscorable" and lines the gateway cannot serve are "unavailable": listed, not
+pending.
+
+## The private import's corporate actions and returns (T-153 part 3d)
+
+`corporate_action` has two writers now: `quant backfill-actions` (the pricing gateway) and
+`pricing_agent import-tiingo` (the private file, under the engine `corpact-tiingo-v1`). quant reads
+both, the gateway's engines first (`kg_schema.corporate_actions.READABLE_ENGINES` is
+`_ACTION_ENGINE_PRIORITY`), so a line the gateway serves again switches to it as a whole rather
+than mixing two vendors' rows; `has_gateway_actions` counts either, since its real question is
+whether `build-returns` has anything to fold in. `quant_return_daily` gains a nullable `vendor`
+column naming the origin of the close a row was built from, and `v_quant_return_daily` does not
+return the `'tiingo'` rows (see `docs/kg_schema.md`). `build-returns` still refuses without a clean
+covering `backfill-actions` run -- for a window that starts in 2019 that means
+`quant backfill-actions --from 2019-01-02`, its default being 2022-01-01.
+
+**The selection is the historical universe (T-143 part A item 9).** `backfill-actions` selects every
+CIK line that was a member at any time in `[2022-01-03, D]` (`kg_schema.queries.members_over_range`),
+current members and leavers -- the same set `pricing_agent` and `fundamental_agent` ingest -- and
+fetches each line over `[--from, the line's last stored bar]`, not only its membership span:
+`kg_schema.market_cap._factor` applies a recorded split up to the last stored bar, so a split
+between a line's index exit and that bar still moves a cap. `quant pending` reads the same lines and
+spans (a leaver's missing action is reported, not left pending forever). Before T-143 part A item 9
+the command used `members_asof(date_to)` only, so no leaver's SPLIT row was ever fetched or cited;
+`build-returns`' own panel (`.db.load_assets`) is deliberately unchanged.

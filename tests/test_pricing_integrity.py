@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import write_universe_db
+from conftest import cik_for, write_universe_db
 
 from kg_schema import rundate
+from kg_schema.db import connect
 from pricing_agent import pipeline
 from pricing_agent.config import Settings
+from pricing_agent.db import ensure_schema
 from pricing_agent.integrity import (
     Jump,
     is_split_shaped,
@@ -389,3 +391,45 @@ def test_a_jump_matches_a_recorded_split_either_way_round() -> None:
     assert matches_recorded_split(Jump("a", "b", 2.0), [2.0])  # a reverse seam
     assert not matches_recorded_split(Jump("a", "b", 0.5), [3.0])
     assert not matches_recorded_split(Jump("a", "b", 0.5), [])
+
+
+# -- T-153 part 3d (D3): observations over an imported line the gateway cannot serve ------------
+
+
+def test_observations_are_derived_when_the_gateway_serves_nothing_but_bars_are_stored(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The private import writes bars the gateway knows nothing about; `--observations` derives
+    their analytics from the stored history through the same function as any other member."""
+    conn = connect(settings.db_path)
+    ensure_schema(conn)
+    conn.execute("INSERT INTO assets (ticker, cik) VALUES ('AAPL', ?)", (cik_for("AAPL"),))
+    asset_id = int(conn.execute("SELECT id FROM assets WHERE ticker = 'AAPL'").fetchone()["id"])
+    conn.execute(
+        "INSERT INTO price_daily (asset_id, date, open, high, low, close, volume, source) VALUES "
+        "(?, '2026-09-01', 100.0, 101.0, 99.0, 100.0, 1000.0, 'tiingo'), "
+        "(?, '2026-09-02', 101.0, 102.0, 100.0, 101.0, 1000.0, 'tiingo')",
+        (asset_id, asset_id),
+    )
+    conn.commit()
+    conn.close()
+
+    # the gateway serves this ticker nothing in the window
+    report = _run(
+        settings,
+        monkeypatch,
+        _Gateway([]),
+        start="2026-09-01",
+        end="2026-09-30",
+        observations=True,
+    )
+    assert report.skipped == 1  # no candles: recorded as no_data, as always
+    conn = connect(settings.db_path)
+    rows = conn.execute(
+        "SELECT obs_date, close, source FROM price_observation ORDER BY obs_date"
+    ).fetchall()
+    assert [(r["obs_date"], r["close"], r["source"]) for r in rows] == [
+        ("2026-09-01", 100.0, "tiingo"),
+        ("2026-09-02", 101.0, "tiingo"),
+    ]
+    conn.close()

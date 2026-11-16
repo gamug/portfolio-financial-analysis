@@ -1,14 +1,22 @@
-"""``python -m api`` -- serve the read-only API with uvicorn."""
+"""``python -m api`` -- serve the API with uvicorn, or ``python -m api orchestrate`` --
+run the pipeline in the foreground (T-011)."""
 
 from __future__ import annotations
+
+import sys
+from collections.abc import Sequence
 
 import uvicorn
 
 from api.app import create_app
 from api.config import ApiSettings
+from api.orchestrator import cli_main
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "orchestrate":
+        return cli_main(args[1:])
     settings = ApiSettings.load()
     uvicorn.run(
         create_app,

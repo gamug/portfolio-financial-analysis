@@ -28,11 +28,24 @@ is a deprecated no-op (membership is synced from `universe.db` every run).
 (uncommitted changes) — its results would come from code `HEAD` alone can't reproduce
 (T-114) — unless `--allow-dirty`, which records why on `analysis_run.params_json`.
 
+### Run log units (`analysis_run` / `v_analysis_run`)
+
+The progress counters in `analysis_run` (and `v_analysis_run`) track work across different units:
+- `planned_units`: one per `(ticker, form, year)` task (`run()` / `db.update_run_plan`).
+- `completed_units` and `skipped_units`: one per filing (`_count()`; a 10-Q year task has several filings).
+- `failed_units`: one per failed `(ticker, form, year)` task or per failed filing (`_record_failure()`).
+
+Because `planned_units` and the other three use different units, `completed_units + skipped_units + failed_units` need not equal `planned_units`.
+
 ## Configuration (`config.py`)
 
 `Settings.load()` requires `KG_FINANCIAL_DB` (via `kg_schema.env.database_path`,
 which also still honours the old misspelled `KG_FINANTIAL_DB`), `LLM_API_KEY`,
-`LLM_MODEL`, `LLM_URL`. Optional: `KG_UNIVERSE_DB` (via
+`LLM_MODEL`, `LLM_URL`. The LLM's thinking mode is explicit: `LLM_THINKING`
+(`disabled` default, or `enabled`) and, only when enabled, `LLM_REASONING_EFFORT`
+(`low` / `high` / `max`, default `high`). A scoring run resolves `LLM_MODEL` once against
+`GET {LLM_URL}/models` and records the resolved name with the mode and effort; the row's model
+label names the resolved version, not the moving alias. Optional: `KG_UNIVERSE_DB` (via
 `kg_schema.env.universe_database_path`; default `/workspaces/thesis/data/universe.db`),
 `EDGAR_BASE_URL` (default `http://host.docker.internal:8000/edgar/edgar` — the
 doubled `/edgar` is intentional), `SEC_USER_AGENT`.
@@ -76,20 +89,36 @@ it as a `cover` run error (T-132).
 
 ### universe source
 
-The Wikipedia scraper is gone. `pipeline._load_members` reads
-`kg_schema.queries.members_asof(universe_conn, analysis_date)` — a
-point-in-time query over `universe.db` — and `db.sync_universe` upserts those
+The Wikipedia scraper is gone. `pipeline._load_window` reads
+`kg_schema.queries.members_over_range(universe_conn, conn, WINDOW_START, analysis_date)` —
+every **CIK line** that was a member at any time in `[2022-01-03, D]`, one entry per line
+with its own membership span (T-153 part 3a) — and `db.sync_universe` upserts those
 `UniverseMember`s into `assets` / `sectors` (the identity-write path where a new
 S&P 500 symbol first gets its `assets.id`). No `universe_membership` /
-`reconcile` write anymore.
+`reconcile` write anymore. `_plan` lists a company that left the index only through its exit
+year, and `_process_filing` drops any filing filed after its last membership day — the same
+D-10 rule (filings from 2022-01-01) a current member already follows, with the exit as the
+upper bound.
 
 ### `statements.py` — `Statements`, `iter_facts`
 
 `Statements.from_payload` parses `income_statement` / `balance_sheet` /
 `cash_flow`. Duration columns look like `"2023-09-30 (FY)"` / `"(Q3)"` / `"(YTD)"`;
 **balance-sheet rows use bare instant dates** and resolve against the
-nearest-earlier instant. `REGISTRY` maps ~25 line items to US-GAAP tags with
-standard/label fallbacks. Revenue prefers an aggregate (`total_concepts`: `Revenues`,
+instant dated the period end -- or the one that rounds to the same month end (PER-08), never the
+nearest earlier one (T-148, N6/ID-05). `REGISTRY` maps ~25 line items to US-GAAP tags with
+standard/label fallbacks, tried in **precedence order**: the exact concepts in the registry's order,
+then `standard`, then label hints (ID-02a, T-148). `Statements.resolve(item, period_key)` returns a
+`Resolution(value, concept, how, flags)`; `get` is its value. **Values are in the filed sign**
+(ID-11/ID-12): the displayed value times the row's `preferred_sign`, which `iter_facts` yields and
+`financial_facts.preferred_sign` stores (`m013`); a row without one reads as displayed and is flagged
+`sign_unverified`; a negative filed value of a capex payment or `InterestAndDebtExpense` /
+`InterestExpenseDebt` (DQC_0015) is rejected and flagged `wrong_sign_rejected`, never `abs()`-ed. The
+T-117/T-140 revenue rebuild arithmetic stays on displayed values. Capex alone keeps the first matching row in the statement's order (`LineItem.document_order`, MET-08) until T-148 (f). The composite items --
+`net_income` (ID-03: `NetIncomeLoss` from any stored statement; else `ProfitLoss` when no NCI income is filed; else `ProfitLoss` less the NCI total; else empty),
+`income_tax` (ID-02b: the total, else current + deferred on the face), `long_term_debt` and
+`short_term_debt` (MET-07, D-06(d), N4, N23; the REIT pair `SecuredDebt` + `UnsecuredDebt` is not read: no source states the identity) -- and `Statements.total_debt` (D-01, ID-02b: the partial
+map, short-term alone, the debt = 0 rule, the capture failure) are described in SPEC FR-001. Revenue prefers an aggregate (`total_concepts`: `Revenues`,
 `RevenuesNetOfInterestExpense` for banks, `RegulatedAndUnregulatedOperatingRevenue` for
 utilities — T-102) over summing its named components, subject to T-095's too-small
 plausibility floor and T-117's too-large label-total contradiction check (a later,
@@ -119,17 +148,17 @@ positive value or a date is dropped. The pipeline stores them in `filing_cover_s
 Each exposes `GROUP` and `compute(stmts, period_key, prior_key=None) ->
 list[MetricResult]`. `MetricResult(name, value, unit, inputs)` — `unit ∈
 {"ratio","pct","x","usd"}`. `base.py` has `safe_div` (None / near-zero guard),
-`present`, `sum_present`.
+`present`, `sum_present`, `flag_inputs` (a resolution's flags as `flag_<item>_<flag>` audit inputs, T-148).
 
 | Module | Ratios |
 |---|---|
 | `profitability` | gross/operating/net margin, ROA, ROE |
 | `liquidity` | current, quick, cash ratio |
-| `leverage` | debt/equity, debt/assets, interest coverage, net-debt/EBITDA |
+| `leverage` | debt/equity, debt/assets, interest coverage (empty when interest expense is not positive, MET-09), net-debt/EBITDA; debt is `Statements.total_debt` |
 | `efficiency` | asset / inventory / receivables turnover |
 | `growth` | YoY revenue / operating income / net income / FCF growth (needs prior period) |
 | `cashflow` | OCF margin, FCF margin, FCF conversion, capex intensity; `free_cash_flow()` helper. Fiscal-year columns on a 10-K, **trailing twelve months on a 10-Q** (real `ytd`/`quarters` flows only, never the `x4` fallback; a flow missing from the TTM leaves its ratios empty) — a 10-Q's cash-flow statement is year-to-date only (T-133) |
-| `roic` | `effective_tax_rate` (clamped, 0.21 default), NOPAT, ROIC |
+| `roic` | `effective_tax_rate` (clamped, 0.21 default), NOPAT, ROIC -- empty when debt, equity or cash is (MET-00) |
 | `cagr` | multi-year revenue / net income / OCF CAGR from a 10-K's FY columns |
 | `valuation` | market cap, EV, equity/enterprise/SBC-adjusted FCF yield — **needs a period-end price**; shares are the filing's cover-page count (`filing_cover_shares`, T-132), else the balance sheet's outstanding count, else the weighted-average diluted count (flagged `shares_are_diluted_average`) — never `CommonStockSharesIssued` |
 
@@ -317,8 +346,17 @@ production-copy verification: `docs/model_fixes.md`, T-065.
 `run` subcommand (flags above), `quality` (the gate backfill over every stored filing; no LLM
 variables needed; exit 1 if no metrics are stored for `--metrics-version`),
 `repair-accessions` (dry run unless `--apply`; gateway only, no LLM variables; exit 1 while
-any accession is left unresolved) and `migrate` →
-`kg_schema.cli.run_migrate`.
+any accession is left unresolved), `pending` (T-017: read-only, one line `pending: yes|no <evidence>`,
+no LLM variables; `fundamental_agent/pending.py`) and `migrate` → `kg_schema.cli.run_migrate`.
+
+**Exit code of `run` (T-017, `failures.py`).** Every recorded failure is classed `data` or
+`service` by an explicit allowlist (`failures.classify`): `data` = stage `period`/`identity`, or a
+message with `Failed to extract financials` (the gateway's extraction failure inside its `unsuccessful payload` message; "No '10-K'/'10-Q' filing found" is a filing that may appear later, so it stays `service`), `reconciliation failed`, `refusing to overwrite` or `refusing
+to replace` -- the filing fails the same way on every run. Everything else, including an unknown
+error, a gateway outage (`failed after N attempts`), an HTTP status error and an LLM provider
+error, is `service`. `run` exits 1 only when **nothing completed and at least one failure is
+`service`**; data failures are still recorded in `analysis_run_error`, logged and printed with
+their class (`[data]` / `[service]`). A run whose only failures are known data failures exits 0.
 
 ## Gotchas
 

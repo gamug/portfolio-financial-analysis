@@ -10,6 +10,7 @@ from kg_schema.trading_calendar import (
     available_from,
     is_trading_day,
     last_final_session,
+    last_session_on_or_before,
     next_trading_day,
     nyse_holidays,
     session_final_at,
@@ -143,3 +144,23 @@ def test_a_future_trading_day_is_pending_and_a_closed_day_never_is() -> None:
 )
 def test_last_final_session(now: str, expected: date) -> None:
     assert last_final_session(_utc(now)) == expected
+
+
+@pytest.mark.parametrize(
+    ("day", "expected"),
+    [
+        (date(2026, 10, 2), date(2026, 10, 2)),  # a Friday session is its own answer
+        (date(2026, 10, 3), date(2026, 10, 2)),  # Saturday
+        (date(2026, 10, 4), date(2026, 10, 2)),  # Sunday
+        (date(2026, 9, 7), date(2026, 9, 4)),  # Labor Day Monday: the Friday before
+        (date(2026, 1, 1), date(2025, 12, 31)),  # New Year's Day, across the year
+    ],
+)
+def test_last_session_on_or_before(day: date, expected: date) -> None:
+    assert last_session_on_or_before(day) == expected
+    assert is_trading_day(last_session_on_or_before(day))
+
+
+def test_last_session_on_or_before_leaves_the_existing_functions_alone() -> None:
+    assert next_trading_day(date(2026, 10, 2)) == date(2026, 10, 5)
+    assert not is_trading_day(date(2026, 10, 3))

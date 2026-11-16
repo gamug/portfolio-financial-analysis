@@ -40,13 +40,32 @@ class ManifestMismatch(RuntimeError):
     """A ``cycle_run`` for this (type, date) exists, built on different input versions."""
 
 
-def check_manifest(conn: Database, cycle_type: str, cycle_date: str, tag: str) -> None:
+def _manifest_fields(recorded: object, current: object) -> list[str]:
+    """The manifest keys a run's record and this run's disagree on (T-153 part 3c, decision 1b)."""
+    if not isinstance(recorded, dict) or not isinstance(current, dict):
+        return []
+    return [
+        key for key in sorted(set(recorded) | set(current)) if recorded.get(key) != current.get(key)
+    ]
+
+
+def check_manifest(
+    conn: Database,
+    cycle_type: str,
+    cycle_date: str,
+    tag: str,
+    manifest: dict[str, Any] | None = None,
+) -> None:
     """Refuse to resume an existing ``(cycle_type, cycle_date)`` run under a different manifest.
 
     ``cycle_run`` is unique per (type, date) and its outputs are keyed by date, so a second
     run over other input versions cannot sit beside the first (unlike ``quant``'s books) --
     resuming it would mix the two. A run recorded before T-090 has no manifest and is left
-    alone. Call this *before* :func:`open_cycle`, which flips an existing run to ``running``."""
+    alone. Call this *before* :func:`open_cycle`, which flips an existing run to ``running``.
+
+    *manifest*, when given, lets the refusal name the field that differs: T-153 part 3c adds
+    ``eligibility`` to the manifest, and a pre-3c run cannot be re-run under the new rule (its
+    ranking would mix two eligibilities) -- it must be redone fresh or at another date."""
     row = conn.execute(
         "SELECT params_json FROM cycle_run WHERE cycle_type = ? AND cycle_date = ?",
         (cycle_type, cycle_date),
@@ -58,10 +77,19 @@ def check_manifest(conn: Database, cycle_type: str, cycle_date: str, tag: str) -
     except (TypeError, ValueError):
         return
     if recorded is not None and recorded != tag:
+        fields = _manifest_fields(json.loads(row["params_json"]).get("manifest"), manifest)
+        named = (
+            f"the manifest field{'s' if len(fields) != 1 else ''} that differ"
+            f"{'s' if len(fields) == 1 else ''}: {', '.join(fields)}; "
+            if fields
+            else ""
+        )
         raise ManifestMismatch(
             f"the {cycle_type} run for {cycle_date} was built on manifest {recorded}; this run "
-            f"resolves manifest {tag}. Resuming would mix inputs -- choose the recorded "
-            f"--metrics-version, or a different date"
+            f"resolves manifest {tag}. Resuming would mix inputs -- {named}a run whose manifest "
+            f"names another eligibility (or none, before T-153 part 3c) cannot be re-run: redo it "
+            f"fresh or at another date; any other difference needs the recorded input versions "
+            f"(--metrics-version)"
         )
 
 
@@ -136,6 +164,54 @@ def check_score_weights(
     raise ScoreWeightsMismatch(
         f"the {cycle_type} run for {cycle_date} was ranked with other score weights ({detail}). "
         "Resuming would mix two blends -- rerun with the recorded weights, or a different date"
+    )
+
+
+class ReplayInputsMismatch(RuntimeError):
+    """A ``cycle_run`` for this (type, date) recorded another selection cut (WP-C)."""
+
+
+def check_replay_inputs(
+    conn: Database,
+    cycle_type: str,
+    cycle_date: str,
+    *,
+    risk_model_id: int | None,
+    veto_cutoff_same_day: bool,
+) -> None:
+    """Refuse to resume an existing run under another selection cut (WP-C).
+
+    A REPLAY run is unique per (type, date) and ``rank``/``positions`` write its ranking and its
+    book in place, so a second run at the same date under a different ``risk_model_id`` (the
+    Top-N cohort restricted to a model's panel) or ``veto_cutoff_same_day`` (the T-1 contagion lag
+    or not) would silently replace the first run's cohort. ``open_cycle`` records both once, when
+    the run is first created, and a resume never rewrites them -- the same hazard
+    :func:`check_manifest` refuses for input versions and :func:`check_score_weights` for the
+    blend. A run recorded before this change has neither key; its behaviour was exactly
+    ``risk_model_id=None`` with the T-1 cutoff, so that is what an absent key means here. Call
+    this *before* :func:`open_cycle`, which flips an existing run to ``running``."""
+    row = conn.execute(
+        "SELECT params_json FROM cycle_run WHERE cycle_type = ? AND cycle_date = ?",
+        (cycle_type, cycle_date),
+    ).fetchone()
+    if row is None or not row["params_json"]:
+        return
+    try:
+        recorded = json.loads(row["params_json"])
+    except (TypeError, ValueError):
+        return
+    if not isinstance(recorded, dict):
+        return
+    was_model = recorded.get("risk_model_id")
+    was_cutoff = bool(recorded.get("veto_cutoff_same_day", False))
+    if was_model == risk_model_id and was_cutoff == bool(veto_cutoff_same_day):
+        return
+    raise ReplayInputsMismatch(
+        f"the {cycle_type} run for {cycle_date} selected under risk_model_id = {was_model!r} "
+        f"and veto_cutoff_same_day = {was_cutoff!r}; this run asks for "
+        f"risk_model_id = {risk_model_id!r} and veto_cutoff_same_day = "
+        f"{bool(veto_cutoff_same_day)!r}. Resuming would replace that run's cohort -- rerun with "
+        "the recorded cut, or reset the run (a different date, or `cycle backfill --force`)"
     )
 
 

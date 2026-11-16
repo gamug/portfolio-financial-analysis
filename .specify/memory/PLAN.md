@@ -32,11 +32,18 @@ additive, backward-compatible upstream schema/API change first (Work items
 heuristic, closed 2026-10-05 — its plan stays below, its tasks are in `CHANGELOG.md`).
 
 **The order now (user, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first 2026-10-09;
-scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → **Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) → **`T-153`** (historical universe) → **Work item 19** (local follow-ups before the
+scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → **Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`)) → **`T-153`** (historical universe) → **Work item 19** (local follow-ups before the
 final pilot: `T-083` → `T-142` → `T-145`) → **Work item 2** (the
 orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the full-universe production run,
 last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry). One task per PR throughout,
 each ending with its status commit after approval.
+
+**Two parallel streams (user, 2026-10-11).** Stream A, the metrics chain of Work item 8 (`T-148` part 2 →
+`T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`)), and stream B (`T-142` → `T-145` → `T-083` →
+Work item 2: `T-011` → `T-012` → `T-013` → `T-017` → `T-019` → `T-014` → `T-015` → `T-016` → the code parts
+of `T-153`) run in parallel, one task per PR each. The orchestrator code does not depend on the metric
+fixes; only the final pilot run (`T-143`) does, and it runs after both streams. `T-153`'s replay re-run
+waits for `T-071`.
 
 - **Work item 8's order (user, 2026-10-07; re-set 2026-10-08 after `T-147`'s audit).** `T-077` (prices and Kenneth
   French factors) and `T-070` (the price-based technical score) read no SEC statement data, so they run while the user
@@ -251,8 +258,12 @@ already checkpointed internally (`cycle_run`/`cycle_checkpoint`).
    - **Access control is deferred (user, 2026-10-06)**: this is not a production deployment, so the run
      endpoints are for the dev container / pilot until Work item 20 (`SPEC.md` FR-015) adds it.
      **`T-100` is invoked through the orchestrator's CLI wrapper** (same code as the HTTP endpoints), run from the dev container or the local host that holds the production `KG_FINANCIAL_DB`; this repo has no production *deployment* yet, so FR-015's "dev / pilot only" limits where the HTTP run endpoints may be reachable, not whether the full-universe *data* run may happen. If it is driven over HTTP instead, `:8010` must not be exposed beyond that host.
-   - Where the orchestration code lives (a new top-level package vs. inside `api/`) is decided in `T-011`; a new
-     package still has to meet Project structure #1's bar.
+   - **Where the orchestration code lives** (decided in `T-011`, 2026-10-12): **inside `api/`** — `src/api/orchestrator.py`
+     (the step table, the runner and the CLI wrapper) and `src/api/routers/run.py` + `src/api/routers/run_status.py`
+     (the run and status endpoints). Reason: Project structure #1's bar for a new top-level package is a genuinely
+     independent subsystem with its own numeric or service dependencies; the orchestrator has no dependencies of its
+     own — it only sequences the existing packages as subprocesses — so a new package would add a placement with no
+     dependency justification.
 2. Reuse each package's own idempotency (FR-004/FR-001/FR-006/FR-013) rather
    than re-implementing skip logic — the orchestrator's job is sequencing
    and failure surfacing, not duplicating each package's resume state.
@@ -267,7 +278,11 @@ already checkpointed internally (`cycle_run`/`cycle_checkpoint`).
    should hard-block on their real upstream dependencies. The full edge set: `cycle` ← `pricing_agent` +
    `fundamental_agent`; `quant` ← `pricing_agent` **+ `fundamental_agent`** (its market cap reads the cover-page
    share count that `fundamental_agent` writes to `filing_cover_shares`, via `kg_schema.market_cap`; staleness
-   is bounded by `market_cap_max_share_age_days`); `entity_resolution` ← nothing in this repo.
+   is bounded by `market_cap_max_share_age_days`); `entity_resolution` ← nothing in this repo; `quant evaluate`
+   ← `cycle select` (T-013, 2026-10-13) — quant evaluate snapshots the live portfolio_position book at `--from`
+   (`quant/evaluate.py:163`), which defaults to the earliest book's as-of -- D itself on a fresh database -- so it
+   runs only after cycle select completed; this is a run-order edge only: quant still imports no other package and
+   its optimizer stays blind to `score_snapshot`/`cycle_ranking`.
 5. **Incremental detection (`T-017`) composes with steps 2 and 4.** Each step has a pending signal ("is there
    upstream data for `--analysis-date` that this step has not processed?"). A run executes the steps that are
    pending **plus their downstream dependents** (step 4's graph), and skips the rest; step 2's idempotency still
@@ -276,6 +291,9 @@ already checkpointed internally (`cycle_run`/`cycle_checkpoint`).
    from the pricing gateway, not just prices). When `KG_NEWS_DB` is not configured or does not exist,
    `entity_resolution` reports "no news source configured", is not pending, and does not fail (the same rule as
    the semantic check).
+   *(Shipped signals (T-017, 2026-10-13): `docs/api.md`, "The incremental run" — one line per signal; each step's
+   `pending` subcommand is read-only, one line `pending: yes|no <evidence>`, and the runner records
+   `pending: ...`, `pending upstream: ...` or `not pending: ...` on the step's `reason`.)*
 
 **Acceptance surface (user, 2026-10-06)**: both the HTTP API and a CLI wrapper over the same orchestrator code.
 `T-014`, `T-015` and the final pilot `T-143` are each accepted through **both**, so neither can pass without
@@ -287,11 +305,13 @@ touching the endpoints.
   (`--analysis-date D`) — runs pricing → fundamental → entity_resolution → cycle → quant, in the correct
   dependency order, and completes on a fresh universe with no pre-existing data.
 - Killing the orchestrator mid-run and re-invoking it (over HTTP or the CLI) does not re-do a step that already
-  completed and wrote its output (delegates to each package's own idempotency, per step 2 above).
+  completed and wrote its output (delegates to each package's own idempotency, per step 2 above). *(T-015,
+  2026-10-13: the run lock, the abandoned-run reconcile and the graceful stops.)*
 - **Run endpoints** (`T-019`): there is one endpoint per step listed in step 1; a run endpoint returns a run
   handle and does not hold the request open; the request contract in step 1 holds (preference flags rejected
   on the writing path, no `--allow-*` override or `migrate` reachable over HTTP); the status endpoint is a `GET` that only reads provenance; write
-  connections are opened only in the run routers, and no read router imports a run router (`grep`-checkable);
+  connections are opened only on the run path (`api/orchestrator.py`, called by the run router and the
+  CLI wrapper), and no read router imports a run router (`grep`-checkable);
   no `migrate` or `cycle backfill` endpoint exists.
 - **Incremental, upstream-aware run (user, 2026-10-06).** Before running any step, the orchestrator checks for
   new upstream information as of `--analysis-date`: new SEC filings and prices from `portfolio-data-mining`
@@ -803,9 +823,8 @@ as task `T-077`.
 
 **Order inside this work item (user, 2026-10-07; re-set 2026-10-08 after `T-147`'s audit)**: `T-141` (step 9) →
 `T-077` (step 6) → `T-070` (step 1) → `T-147` (step 10) → `T-149` (step 12) → `T-148` (step 11) → `T-150` (step 13) →
-`T-151` (step 14, which absorbs step 2's EBITDA sub-task and step 5's growth item) → `T-076` (step 5, without its
-growth item; its quick-ratio item follows `T-151`'s dictionary) → `T-073` (step 3) → `T-074`
-(step 4) → `T-071` (step 2) → `T-153` (step 15). `T-077` and `T-070` read no SEC statement data, so they run while the user builds the
+`T-151` (step 14, done 2026-10-13, PR #148; absorbs step 2's EBITDA sub-task and step 5's growth item) → `T-076` (step 5, done 2026-10-13, PR #152) → `T-071` part 1 (step 2, done 2026-10-13, PR #156) → `T-073` (step 3, done 2026-10-14, PR #160) → `T-074` (step 4, superseded 2026-10-14) →
+`T-155` (step 3a, the current members' CIK successions, done 2026-10-14, PR #165) → **`T-071` part 2a** (step 2, the cycle exclusion rules -- D-04, D-13, D-14 measured, D5; done 2026-10-15, PR #167) → **`T-071` part 2b** (step 2, the VALORIZATION score, `valorization-v2`; **done 2026-10-16, PR #169 -- `T-071` is closed**: part 1 PR #156, part 2a PR #167, part 2b PR #169, D-14 closed by the user 2026-10-15) → **`T-156`** (step 3c, EBITDA coverage: what the rules allow us to recover -- E1-E3 applied, E4 declared, `metrics-v8`; **done 2026-10-16, PR #170**; stream A, before the final pilot `T-143`) → `T-153` (step 15). `T-077` and `T-070` read no SEC statement data, so they run while the user builds the
 checklist; the tasks that build on SEC-derived metrics wait for `T-151`. One task per PR, each ending with its status
 commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-075` (step 4's bridge) are superseded by
 `T-100`: it runs the LLM on every filing from a fresh database, with the final prompts.
@@ -825,7 +844,18 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
    (`(R5d - μ60d)/σ60d < -2.5` → HARD-temporal). Persist an explicit
    expiration timestamp on temporal vetoes in the `veto` table so re-entry
    semantics are defined, not implicit.
-2. **Valorization redesign and company profile (`T-071`, `src/cycle/scores/valorization.py`)**: replace
+2. **Valorization redesign and company profile (`T-071`, `src/cycle/scores/valorization.py`).**
+   **Status: DONE 2026-10-16** -- part 1 (PR #156), part 2a (PR #167), part 2b (PR #169), with D-14
+   closed by the user on 2026-10-15. The task entry moved to `CHANGELOG.md`; the plan and the
+   acceptance criteria stay here.
+   *(Split 2026-10-13, like `T-151`: **part 1 -- the company profile (APP-00) and the applicability
+   matrix applied by the metrics code -- DONE, PR #156** (the plan and the measurements are in
+   `docs/model_fixes.md` "T-071 part 1"; the tracked profile `src/kg_schema/data/company_profile.csv`,
+   one reader `kg_schema.company_profile.profile_as_of(cik, as_of)`, the matrix in
+   `src/kg_schema/data/` with `kg_schema.applicability.applicability` (NA > ADJ > A), applied by
+   `agents._compute_all`). **Part 2 keeps the redesign below**, with D-13, D-14, D-04's
+   `DQ_NEG_EQUITY` basis question, DQ-02's winsorizing, the market cap read at the cycle date and the
+   financials'/utilities' sector-specific factors. **D-07 = keep** (user, 2026-10-13).)* Replace
    book-to-market and `D/E` (both sign-broken under negative equity, see
    C2) with Enterprise-Value multiples — `enterprise_fcf_yield` (already
    computed) and a new `EBITDA/EV` factor (persist EBITDA in
@@ -858,14 +888,23 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
    inputs: no veto, flagged; CEG and VST fall inside the exemption through the GICS proxy, AES and NRG do not; report the
    5%–12% sensitivity.
    **D-14 (REITs, open):** measure how many REITs `NEGATIVE_FCF` vetoes in the replay first, then decide.
+   **Part 1 (done) also delivers the type the exemptions key on:** the profile carries the
+   regulated-utility overlay (D-13's GICS proxy) beside the APP-00 type, so part 2 reads one source.
 3. **Fundamental agent: continuous scoring rubric** (`agents.py`): the
    synthesis prompt currently asks for a bare `0-100` integer with no
    rubric, and the LLM anchors into 22 discrete round values (verified:
    4,844 scores, only 22 distinct values, top frequencies at 62/48/58/68/…)
-   — replace with an explicit 4-pillar weighted rubric requiring one
-   decimal place: `0.30·Profitability + 0.25·Solvency + 0.25·CashFlow +
-   0.20·Moat`.
-4. **Structured `forensic_flags` end-to-end** — needs Work item 5 (A2)
+   — replace with a rubric requiring one decimal place, **redesigned 2026-10-13 (user) before it
+   starts**: the **LLM rates each pillar and the code applies the weights** (constitution AI behavior
+   #1); **four pillars from computed metrics only** — profitability (the profitability, roic and
+   efficiency groups), financial strength (leverage, liquidity), cash flow, growth (growth, cagr);
+   **"Moat" is dropped** (no computed input, no loaded source); **valuation stays in the narrative**
+   (it is already the stored VALORIZATION component, so scoring it here would double-count it); the
+   **weights are equal, declared as a calibration and kept in one setting** (changing them needs no
+   LLM call); **no neutral 50 anywhere** (MET-00); the input is `T-071` part 1's count of filings with
+   an empty *applicable* pillar (`scripts/verify_t071a.py` → `out/pillars.json`); and a **staggered
+   paid smoke test** (a few filings, then more), each stage approved by the user.
+4. ~~**Structured `forensic_flags` end-to-end** — needs Work item 5 (A2)
    first: extend `FundamentalAssessment`/the synthesis JSON schema with the
    4-boolean `forensic_flags` object (`data_error_suspected`,
    `negative_equity_buyback`, `value_destroyer_sub_wacc`,
@@ -876,29 +915,63 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
    data-quality veto — this is what closes the "LLM caught it, `cycle`/
    `quant` ignored it" architecture-bypass finding (verified: 7 filings —
    BKNG, META, KHC, CPT, MCD, PHM, LHX — where the saved narrative already
-   says "data error"/"accounting artifact"/"nonsensical" in prose today).
+   says "data error"/"accounting artifact"/"nonsensical" in prose today).~~
+   **Superseded 2026-10-14 (`T-074`, at the user's direction — do not implement)**: consuming an LLM flag
+   as a `cycle` veto breaks constitution AI behavior #3 ("no LLM call sits on that path"), and its
+   motivation (seven old narratives saying "data error") predates T-148–T-151's fixes and T-076's D5,
+   whose deterministic screens withhold suspect values before the model; `negative_equity_buyback` is
+   APP-07 / D-04, a deterministic `cycle` policy in `T-071` part 2; `value_destroyer_sub_wacc` needs a
+   WACC, which is not computed (a possible feature after `T-100`); `severe_sbc_dilution` has no sourced
+   threshold (MD-37 is a project measure). `score_snapshot.forensic_flags_json` stays `NULL`
+   ("not evaluated").
    ~~**Zero-cost immediate bridge**: before the full LLM re-run, regex-mine
    the existing 4,844 narratives for those same keywords and raise the
    data-quality veto from that match immediately (Ring 2 — $0, a SQL/regex
    scan, no LLM calls) rather than waiting on step 3+4's full re-run.~~
    **Superseded 2026-10-05 (`T-075`)**: it was a stop-gap for production's old narratives, and
    production stays frozen until `T-100`, which re-scores everything with the final prompts.
-5. **Skills redesign** (`skills/*/SKILL.md`, `agents.py`): add a 10-Q
-   frequency preamble (no skill currently mentions 10-Q vs. 10-K despite
-   `form` reaching the prompt — this is the LLM-side companion to fix F4:
-   "if this filing is a 10-Q, flow ratios are quarterly, don't score them
-   against annual thresholds without annualizing"); tighten the valuation
-   skill's magnitude gate (currently only `market_cap > 0`, which MCD's
-   $209k and WAT's $37.2T both trivially pass — require
-   `\|FCF yield\| > 50%` or a balance-sheet-scale mismatch to force
-   `DATA_ERROR_SUSPECTED`); add a dedicated `profitability` skill (DuPont
-   decomposition, annualization rule, ROE→ROIC fallback under
-   `equity <= 0`) — currently profitability relies on 2 inline prompt
-   lines while 5 other groups (cashflow, leverage, roic, cagr, valuation)
-   already have a dedicated `skills/<name>/SKILL.md`; streamline
-   each `SKILL.md`'s manual-extraction boilerplate (unused once ratios
-   arrive precomputed in the automated pipeline) to cut per-filing token
-   cost.
+5. **Skills rebuilt on the checklist** (`skills/<group>/SKILL.md`, `agents.py`; `T-076`).
+   The original scope (a 10-Q frequency preamble, a tightened valuation
+   magnitude gate that would force `DATA_ERROR_SUSPECTED`, a new
+   `profitability` skill with a DuPont decomposition and an ROE→ROIC
+   fallback, and a trim of the manual-extraction boilerplate) was
+   **redesigned 2026-10-13** after reviewer A read the five skills against
+   checklist v1.3 and found them contradicting the rules (NOPAT at the
+   filing's own rate with a 21%/45% gate, operating leases as debt,
+   "average or ending" invested capital, a dual invested-capital approach,
+   an unsourced WACC and "excess cash" band, "zombie" labels and rating
+   tiers, "FCFE" naming, balance-sheet shares for the market cap, an EV
+   without NCI; each with the rule it broke in `out/contradictions.md`):
+   - **the skills are rebuilt, one per specialist group**, on the
+     checklist: `profitability`, `liquidity`, `leverage`, `efficiency`,
+     `growth`, `cashflow`, `roic`, `cagr`, `valuation`. Each is
+     interpretation only, states no formula and carries a citation for
+     every statement — a checklist rule ID, or a loaded source with its
+     PDF page and verbatim quote in `skills/SOURCES.md`. The checklist's
+     definitions and rules are generated (`metric_definitions.csv`,
+     `checklist_rules.csv`), and the group's generated blocks join the
+     prompt. The 10-Q basis is generated from `provenance.ITEMS` rather
+     than hand-written (D3's wording, which named three buckets, is
+     recorded as changed in `docs/model_fixes.md`: `ITEMS` gives a basis
+     per line item and has four).
+   - **the DQ screens withhold, instead of an LLM-side gate**: Annex A-03
+     and A-05 already withhold a market cap or a free-cash-flow yield
+     outside its band, deterministically, and an LLM gate would break AI
+     behavior #1 (the LLM computes no number). Withheld values join the
+     brief *and* the fallback score's inputs as `withheld (<rule id>)`.
+   - **DuPont is dropped**: our definitions do not decompose (margin ×
+     turnover × leverage does not reproduce our ROE, which is parent net
+     income over the prior year's parent equity). The ROE→ROIC reading on
+     negative equity is kept and sourced (APP-07, C7 p.12).
+   - **the quick and cash ratios are unchanged** until the second author
+     is loaded (D-05, "source pending"): a cash ratio "tolerant of a
+     missing cash line" would put a 0 in place of an unfiled line
+     (MET-00). Both are declared.
+   No stored metric value changes and no LLM call is made (`T-100` runs
+   the LLM). Acceptance: the nine skills exist and pass their tests, the
+   generated data agrees with the checklist row by row, the withheld
+   values match `quality`'s HARD gates, and the measurements are in
+   `docs/model_fixes.md` T-076.
 6. **`quant` μ estimator — Carhart 4-factor, supersedes Work item 3's
    single-factor plan**: `mu_i = rf + Σ_k β_i,k^shrunk · λ̄_k` over
    `{MKT, SMB, HML, MOM}`, with Vasicek shrinkage on each asset's OLS betas
@@ -1066,9 +1139,10 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
       `TASKS.md` `T-151`.
 
 15. **The historical universe (`T-153`, after `T-071`, needed for PER-10 and PER-11; review points 1 and 4 of `phase3_decisions.md` §9–§10 and `checklist_v1.3.md` L-11).**
-    - Point `KG_UNIVERSE_DB` at `/workspaces/thesis/data/universe_history.db`, built by data-mining PR #49. Never overwrite the pilot's `universe.db`.
+    - Point `KG_UNIVERSE_DB` at `/workspaces/thesis/data/universe_history_gics.db` (data-mining PR #51:
+      `universe_history.db` with the leaver stints' GICS filled), built by data-mining PR #49. Never overwrite the pilot's `universe.db`.
     - Read `valid_to` as the last day of membership: `kg_schema/queries.py:124` changes from `valid_to > ?` to `valid_to >= ?` (today `valid_to > D` drops a leaver on its last day).
-    - For the 86 companies that left the index in the window: their filings by CIK, their type in `company_types.csv`, and their GICS classification (the historical source is still to be decided).
+    - For the 86 companies that left the index in the window: their filings by CIK, their type in `company_types.csv`, and their GICS classification (the historical source: Wikipedia as of each exit, decided 2026-10-14; see the T-153 entry in `TASKS.md`).
     - Then run the replay's figures (vetoes by sector, financial firms, utilities, the D-13 three-year average) again on the historical universe before they go into the thesis.
 
 **Acceptance criteria**:
@@ -2037,7 +2111,7 @@ amount (the app).
 - `quant`'s benchmark follows the same rule, pinned against `cycle`'s by a test; the isolation test stays
   green, and `uv run pytest -q`, `ruff` and `mypy` are green.
 
-## Work item 19 — Local follow-ups before the final pilot (added 2026-10-05)
+## Work item 19 — Local follow-ups before the final pilot (added 2026-10-05) — DONE 2026-10-12
 
 **Why**: the user's 2026-10-05 scope decision is to finish this repo before touching the knowledge-graph
 side. Work item 9's `T-083` is the one local piece of that item (our API reading the rewritten
@@ -2103,7 +2177,8 @@ approval.
      and the configured, possibly NULL, ones on MONITORING runs; `scheme_id` is the position-weighting rule
      (`score_proportional`, `score_tilt`), not the blend (a blend is identified by its `cycle_run`; its
      configured weights are `v_weight_component`); no component means all components null; `vetoed` is true
-     only for a HARD veto (with the T-1 lag) or `UNSCORED`, and a SOFT veto only lowers `blended_score`; the
+     only for a HARD veto (with the T-1 lag), `UNSCORED` or `UNPRICED`, and a SOFT veto only lowers
+     `blended_score`; the
      timezones of the `*_at` columns (`computed_at` is ISO 8601 UTC, written with `+00:00`); the forensic-flag
      keys (the four booleans; the codes are the keys that are `true`).
    - A marker migration that bumps `schema_version`, since view changes are not migrations and the knowledge
@@ -2143,14 +2218,6 @@ approval.
    `schema_version` 8 until `T-100` (`m009`, the veto stints, was never applied to it); the knowledge-graph repo
    keeps its floor at or below the database's own version for it.
 
-6. **`T-159`**, the dev-container image test. The root `Dockerfile` (base `devcontainers/python:1-3.12-bookworm`,
-   uv copied from the official image at a pinned `UV_VERSION`) replaced the uv devcontainer feature and its lock
-   file; this step proves the image works end to end through the Dev Containers CLI, from the Windows host: mount
-   and `UV_LINK_MODE`, `scripts/init.sh`, the CI quality gates inside the container, uv completion, and the host's
-   Linux-created `.venv` that breaks the host-side pre-commit hook. It also decides how `UV_VERSION` is bumped
-   and whether CI builds the image. Placement is proposed, not confirmed: outside the priority chain, gating
-   neither `T-143` nor `T-100`.
-
 **Acceptance criteria**:
 
 - `T-083`: the reconciliation query in Work item 9's acceptance returns 0 rows, and `api` renders a live-only
@@ -2181,7 +2248,6 @@ approval.
   before the migration; `verify_pilot.py` fails on a
   dangling or wrong-type `run_id`, a NULL accession and a duplicate accession, and passes on a database built by
   the current code.
-- `T-159`: each check in its `TASKS.md` entry has its output, or "not run, why", in the PR description.
 - `T-083` and `T-142` change no `v_*` view (constitution AI behavior #10); `T-144` is the one approved view
   change. `uv run pytest -q`, `ruff` and `mypy` are green for each.
 
@@ -2200,6 +2266,74 @@ work item starts). Read endpoints are untouched.
 
 **Acceptance criteria**: FR-015's acceptance column, as tests (`T-146`); the read endpoints behave identically
 with and without the settings; `docs/api.md` documents both settings.
+
+## Work item 21 — Upstream: `portfolio-common` patch re-pin `v1.2.1` → `v1.2.2` (external, P2) — DONE 2026-10-16
+
+**Why**: `portfolio-common` `v1.2.2` narrows `Database.attach(read_only=True)`'s
+stale-WAL preflight to reject only an orphaned WAL (non-empty `-wal`, no
+`-shm`), not a live writer's WAL — the production concurrency bug that
+blocked `portfolio-nlp`'s `attach_source()` while `portfolio-data-mining`'s
+collector held `urls.db` open. This item re-pins this repo too, for baseline
+consistency across every `portfolio-common` consumer, even though the fix
+doesn't touch a code path this repo uses. Not given its own `T-###`: a
+two-line dependency re-pin with no code/contract change doesn't carry the
+weight the `T-###` convention is for elsewhere in this file (see `T-157`'s
+`TASKS.md` entry for what that weight looks like) — this Work item entry is
+the complete record on its own.
+
+**This repo's own `urls.db` read path was never affected either way.**
+`entity_resolution/news_db.py`, opened via `kg_schema.connect_ro` ->
+`Database.connect(read_only=True)`, is a bare `mode=ro` open, not
+`Database.attach()` — the buggy preflight only ever lived inside `attach()`.
+Demonstrated, not just reasoned about:
+`tests/test_entity_resolution.py::test_connect_ro_reads_through_a_live_writers_wal`
+holds a real writer open on a WAL-mode `urls.db` and asserts a read through
+`entity_resolution.news_db.article_ids_for_ticker` both doesn't block and
+sees the writer's just-committed row.
+
+**Acceptance criteria** (all verified met, PR #172):
+
+- ✅ `pyproject.toml`'s `portfolio-common` source pins `tag = "v1.2.2"`;
+  `uv.lock` diff scoped to exactly the `portfolio-common` version/source
+  lines.
+- ✅ `uv run pytest` (2652 passed); `ruff check`/`format --check`; `mypy` —
+  all green except pre-existing Windows-local-only failures (`fcntl`,
+  `os.symlink` privilege, `cp1252` fixture decoding), confirmed identical
+  against the old `v1.2.1` pin via `git stash`.
+- ✅ `SPEC.md` NR-004, the storage/upstream-library bullets, and
+  `constitution.md`'s storage clause updated from "currently `v1.2.1`" to
+  "currently `v1.2.2`" — constitution AI behavior #11 reconciliation for
+  this item. (Work item 1's own closed record is left untouched per its
+  "do not re-open" note; this is the new, separately-scoped item it asked
+  for.)
+- ✅ Both architecture artifacts updated: the Portfolio Financial Analysis
+  artifact's hero dek, "What it does today" `kg_schema` bullet, SVG
+  `aria-label`/node tooltip, and "Other useful details" bullet now say
+  `v1.2.2`, plus a new footer changelog entry; the Portfolio Thesis
+  system-wide overview's build-state table, this repo's row description, and
+  (round 6 of this PR's review) its hero statline pill — previously the one
+  undated version pill on that page, contradicting the build-state table two
+  sections below it — all updated, plus its own footer changelog entry.
+  Neither pass touched `portfolio-knowledge-graph`'s row/pin — that repo's
+  `portfolio-common` version has not been checked from this session and both
+  artifacts say so rather than asserting it.
+
+## Work item 23 — Dev-container image test (added 2026-11-16; outside the priority chain)
+
+**Placement (user, 2026-11-16): outside the priority chain.** It gates neither `T-143` nor `T-100` and can run at
+any point. Its task is `T-164` (first numbered `T-159` in PR #199; renumbered before any work started, because
+master took `T-159` for a pilot follow-up in the meantime).
+
+**Why**: the dev container used to pull an image and the uv devcontainer feature. PR #199 replaced them with a
+root `Dockerfile` (base `devcontainers/python:1-3.12-bookworm`, uv copied from the official image at a pinned
+`UV_VERSION`) that was only checked with `docker build` and the Dev Containers CLI's `build`. Nothing yet proves
+the container the maintainer actually opens (`up`, `scripts/init.sh`, the CI gates inside it) works, and the
+Linux-created `.venv` already broke the host's pre-commit hook once. The step proves it from the Windows host,
+then decides how `UV_VERSION` is bumped, whether CI builds the image and whether `gh` moves from `init.sh` into
+the Dockerfile, and records those decisions in `docs/devcontainer.md`.
+
+**Acceptance criteria**: each check in `T-164`'s `TASKS.md` entry has the command, its output and a pass/fail,
+or "not run, why", in the PR description; the three decisions are in `docs/devcontainer.md`.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
@@ -2333,8 +2467,17 @@ this document.** Their internal sequencing:
   the user builds the SEC data-treatment checklist; `T-147` (the audit) and `T-148` (the fixes) precede the
   tasks that build on SEC-derived metrics. `T-100`'s dependency rule already covers both, as tasks added later.
 - Work item 8's order was re-set again on 2026-10-08 after `T-147`'s audit: `T-141` → `T-077` → `T-070` → `T-147` →
-  `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071` → `T-153` (`T-072` and `T-076`'s growth item are
+  `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`) → `T-153` (`T-072` and `T-076`'s growth item are
   absorbed by `T-151`; the rest of `T-076` runs after it). `T-100`'s dependency rule covers the new tasks as tasks added later.
 - **Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all**, after every other task in this file that is not deferred or superseded — current and future — so after Work item 8 (… → `T-071`), `T-153`, Work item 19 and Work item 2. `T-100` keeps `T-153` as a prerequisite.
 
 See `TASKS.md` for the discrete, checkable task breakdown.
+
+## Work item 22 — Daily backtest and GUARD (FR-016 / FR-017) — CLOSED 2026-10-31
+
+Built and closed in one change (`T-163`, PR #188): the daily backtest (`cycle.backtest` engine,
+driver, m018 and its eight views), GUARD frozen on 2019-2021 before any window run, the six rule-based
+runs (P1, P3, P2 at W = 12 and W = 6), the export command and the results files, and the docs
+(`docs/backtest.md`, SPEC FR-016/FR-017, `docs/model_fixes.md` REPLAY entries, `docs/cycle.md`,
+`docs/kg_schema.md`). U1 = no (user, 2026-10-31). Acceptance: `docs/backtest.md` §10 and
+`/workspaces/thesis/scratch/final/REPORT.md`. Tasks and their acceptance criteria: `CHANGELOG.md`.

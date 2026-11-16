@@ -337,6 +337,7 @@ _BASELINE_COLUMNS: dict[str, tuple[str, ...]] = {
         "source",
         "engine_version",
         "computed_at",
+        "vendor",
     ),
     "v_risk_free_rate": (
         "id",
@@ -480,6 +481,165 @@ NEW_VIEWS: dict[str, tuple[str, ...]] = {
         "configured_weight",
         "effective_weight",
     ),
+    "v_orchestrator_run": (
+        "run_id",
+        "kind",
+        "as_of",
+        "code_version",
+        "status",
+        "started_at",
+        "finished_at",
+        "settings_json",
+        "handle",
+        "surface",
+    ),
+    "v_orchestrator_step": (
+        "orchestrator_run_id",
+        "handle",
+        "ordinal",
+        "step",
+        "status",
+        "started_at",
+        "finished_at",
+        "exit_code",
+        "run_kind",
+        "run_id",
+        "reason",
+        "argv_json",
+        "output_tail",
+    ),
+    # T-153 part 2: the as-of ticker history (contract 16).
+    "v_ticker_history": (
+        "cik",
+        "symbol",
+        "valid_from",
+        "valid_to",
+        "canonical_symbol",
+        "asset_id",
+        "evidence_url",
+        "evidence_date",
+        "rules",
+    ),
+    # WP-A / m018: the backtest engine's read contract (contract 18). Weights and aggregates
+    # only -- no view exposes one asset's price or return.
+    "v_book": (
+        "book_id",
+        "backtest_run_id",
+        "window_id",
+        "d_start",
+        "d_end",
+        "formation_date",
+        "run_status",
+        "arm_code",
+        "objective",
+        "exclude_hard_vetoed",
+        "guard_layers",
+        "code_version",
+        "knowledge_date",
+    ),
+    "v_book_rebalance": (
+        "rebalance_id",
+        "book_id",
+        "backtest_run_id",
+        "arm_code",
+        "decision_date",
+        "execution_date",
+        "quant_portfolio_id",
+        "cycle_run_id",
+        "risk_model_id",
+        "status",
+        "knowledge_date",
+    ),
+    "v_guard_alert": (
+        "alert_id",
+        "backtest_run_id",
+        "window_id",
+        "date",
+        "layer",
+        "ticker",
+        "asset_id",
+        "rule_id",
+        "value",
+        "threshold",
+        "state",
+        "knowledge_date",
+    ),
+    "v_guard_action": (
+        "action_id",
+        "book_id",
+        "backtest_run_id",
+        "arm_code",
+        "alert_id",
+        "decision_date",
+        "effective_date",
+        "ticker",
+        "asset_id",
+        "status",
+        "weight_before",
+        "weight_after",
+        "knowledge_date",
+    ),
+    "v_book_weight_daily": (
+        "book_id",
+        "backtest_run_id",
+        "arm_code",
+        "date",
+        "holding_key",
+        "asset_id",
+        "holding_name",
+        "markowitz_target_weight",
+        "final_target_weight",
+        "knowledge_date",
+    ),
+    "v_book_daily_performance": (
+        "book_id",
+        "backtest_run_id",
+        "arm_code",
+        "window_id",
+        "date",
+        "gross_return",
+        "turnover",
+        "cost_return",
+        "net_return",
+        "nav",
+        "drawdown",
+        "cash_weight",
+        "n_equity",
+        "benchmark_return",
+        "knowledge_date",
+    ),
+    "v_portfolio_period_summary": (
+        "book_id",
+        "backtest_run_id",
+        "arm_code",
+        "window_id",
+        "segment",
+        "date_from",
+        "date_to",
+        "cumulative_return",
+        "annualized_return",
+        "annualized_vol",
+        "ex_post_sharpe",
+        "max_drawdown",
+        "total_turnover",
+        "total_cost_bps",
+        "n_rebalances",
+        "n_guard_actions",
+        "knowledge_date",
+    ),
+    "v_backtest_test": (
+        "backtest_run_id",
+        "window_id",
+        "segment",
+        "arm_a",
+        "arm_b",
+        "test",
+        "statistic",
+        "p_value",
+        "n_obs",
+        "params_json",
+        "knowledge_date",
+    ),
 }
 
 
@@ -537,7 +697,14 @@ def test_the_marker_migration_changes_no_table(conn: Database) -> None:
         10,
         11,
         12,
-    ]  # m011 adds only columns that exist; m012 only triggers
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+    ]  # m011 and m013 add only columns that exist; m012 only triggers; m014 autoincrement;
+    # m015 (T-012), m016 (T-153 part 2), m017 (T-153 part 3d) and m018 (backtest) are markers
     after = {r[0]: r[1] for r in conn.execute("SELECT name, sql FROM sqlite_master")}
     assert after == before
 
@@ -551,7 +718,7 @@ def test_ensure_views_leaves_a_database_that_is_ahead_of_the_code(conn: Database
     conn.execute("DROP VIEW v_cycle_ranking_component")
     conn.execute("DROP VIEW v_cycle_ranking")
     conn.execute("CREATE VIEW v_cycle_ranking AS SELECT 1 AS from_a_later_contract")
-    queries.record(conn, 13, "a later contract")
+    queries.record(conn, 19, "a later contract")
     ensure_views(conn)
     assert _columns(conn, "v_cycle_ranking") == ("from_a_later_contract",)
     assert not conn.relation_exists("v_cycle_ranking_component")
@@ -854,7 +1021,7 @@ def _rank(  # noqa: PLR0913, PLR0917 - one ranking row, every column a test may 
             rank,
             blended,
             json.dumps(components),
-            int(bool(veto_rules and "HARD" in veto_rules)),
+            int(bool(veto_rules and ({"HARD", "UNSCORED", "UNPRICED"} & set(veto_rules)))),
             json.dumps(veto_rules or []),
         ),
     )
@@ -912,15 +1079,18 @@ def test_effective_weights_renormalize_over_the_non_null_components(conn: Databa
 def test_blended_score_identity_holds_with_soft_vetoes(conn: Database) -> None:
     """sum(effective weight * component) - soft_veto_penalty * (SOFT vetoes) = blended_score."""
     _cycle(conn, 1, "2026-03-02", "completed", WEIGHTS, soft_veto_penalty=12.5)
+    conn.execute("INSERT INTO assets (id, ticker) VALUES (4, 'DDD')")
     cases: dict[int, tuple[dict[str, float | None], list[str]]] = {  # asset -> (comps, vetoes)
         1: ({"FUNDAMENTAL": 80.0, "TECHNICAL": 40.0, "VALORIZATION": 55.0}, []),
         2: ({"FUNDAMENTAL": 70.0, "TECHNICAL": None, "VALORIZATION": 20.0}, ["LEV_SOFT"]),
         3: ({"FUNDAMENTAL": 30.0, "TECHNICAL": 90.0}, ["A", "B", "HARD", "UNSCORED"]),
+        # a data-gap marker is not a SOFT rule: it takes no penalty off the blend (T-153 part 3c)
+        4: ({"FUNDAMENTAL": 20.0, "TECHNICAL": 10.0}, ["UNPRICED"]),
     }
     for rank, (asset, (comps, rules)) in enumerate(cases.items(), start=1):
         num = sum(WEIGHTS[k] * v for k, v in comps.items() if v is not None)
         den = sum(WEIGHTS[k] for k, v in comps.items() if v is not None)
-        soft = [r for r in rules if r not in ("HARD", "UNSCORED")]
+        soft = [r for r in rules if r not in ("HARD", "UNSCORED", "UNPRICED")]
         _rank(conn, 1, asset, rank, num / den - 12.5 * len(soft), comps, rules)
     conn.commit()
     penalty = conn.execute("SELECT soft_veto_penalty FROM v_weight_scheme").fetchone()[0]
@@ -934,7 +1104,9 @@ def test_blended_score_identity_holds_with_soft_vetoes(conn: Database) -> None:
             (r["asset_id"],),
         ).fetchall()
         assert sum(p["effective_weight"] for p in parts) == pytest.approx(1.0)
-        soft = [x for x in json.loads(r["veto_rules_json"]) if x not in ("HARD", "UNSCORED")]
+        soft = [
+            x for x in json.loads(r["veto_rules_json"]) if x not in ("HARD", "UNSCORED", "UNPRICED")
+        ]
         got = sum(p["effective_weight"] * p["component_value"] for p in parts) - penalty * len(soft)
         assert got == pytest.approx(r["blended_score"], abs=1e-9)
 
@@ -969,7 +1141,9 @@ def test_blended_score_identity_uses_each_soft_rules_penalty_points(conn: Databa
             "WHERE cycle_run_id = 1 AND asset_id = ?",
             (r["asset_id"],),
         ).fetchall()
-        soft = [x for x in json.loads(r["veto_rules_json"]) if x not in ("HARD", "UNSCORED")]
+        soft = [
+            x for x in json.loads(r["veto_rules_json"]) if x not in ("HARD", "UNSCORED", "UNPRICED")
+        ]
         penalty = sum(p if (p := points.get(x)) is not None else default for x in soft)
         got = sum(p["effective_weight"] * p["component_value"] for p in parts) - penalty
         assert got == pytest.approx(r["blended_score"], abs=1e-9)

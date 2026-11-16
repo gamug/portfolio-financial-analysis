@@ -203,12 +203,56 @@ def manifest_tag(manifest: Mapping[str, object]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:8]
 
 
-# The Ring-1 data-quality gate version (T-065; bumped to dq-v2 by T-116's
-# DQ_NEG_EQUITY recalibration -- a gate-methodology change, so it re-gates as a parallel set
-# of rows rather than overwriting dq-v1's). ``fundamental_agent`` writes ``data_quality_issue``
-# rows under it and ``cycle`` reads only rows of it; kept here so the writer and the reader
-# agree without importing each other.
-DATA_QUALITY_GATE_VERSION: Final[str] = "dq-v2"
+# The Ring-1 data-quality gate version (T-065; dq-v2 by T-116's DQ_NEG_EQUITY recalibration; dq-v3
+# by T-150's accounting-identity gate; dq-v4 by T-071 part 2a's D-04 -- DQ_NEG_EQUITY is a record,
+# never a veto, and quarantines D/E only -- a gate-methodology change, so it re-gates as a parallel
+# set of rows rather than overwriting the earlier ones). ``fundamental_agent`` writes
+# ``data_quality_issue`` rows under it and ``cycle`` reads only rows of it; kept here so the writer
+# and the reader agree without importing each other.
+DATA_QUALITY_GATE_VERSION: Final[str] = "dq-v4"
+
+
+# The D-13 regulated-utility cash-coverage rule input (T-071 part 2a). It is stored in
+# ``fundamental_metrics`` under the ``rule_input`` pseudo-group -- deliberately **not** one of
+# :data:`METRIC_GROUPS`, so no metric consumer, pillar member or prompt ever reads it -- and
+# ``cycle``'s ``UTILITY_CASH_COVERAGE`` rule reads it directly. Kept here for the same reason as
+# ``DATA_QUALITY_GATE_VERSION``: the writer (``fundamental_agent.utility_coverage``) and the reader
+# (``cycle.data``) agree on the contract without importing each other.
+RULE_INPUT_GROUP: Final[str] = "rule_input"
+UTILITY_COVERAGE_METRIC: Final[str] = "utility_cash_coverage_3y"
+# The two three-year bounds the input carries (R2): with the ambiguous working-capital lines left in
+# the cash flow, and with them treated as working capital.
+UTILITY_COVERAGE_BOUND_IN: Final[str] = "average_ambiguous_in"
+UTILITY_COVERAGE_BOUND_AS_WC: Final[str] = "average_ambiguous_as_wc"
+# The two flags in ``inputs_json``: a bound is missing (fewer than three yearly ratios), or the two
+# bounds straddle the cutoff (so neither vetoes, but the ambiguity is reported).
+UTILITY_COVERAGE_MISSING_BOUND_FLAG: Final[str] = "flag_utility_cash_coverage_missing_bound"
+UTILITY_COVERAGE_AMBIGUOUS_FLAG: Final[str] = "flag_utility_cash_coverage_ambiguous_working_capital"
+# The cutoff (C13 p.7's Ba band lower bound). HARD only when **both** bounds are below it (R2).
+UTILITY_COVERAGE_THRESHOLD: Final[float] = 0.05
+
+
+# The D1 VALORIZATION value inputs (T-071 part 2b). Stored in ``fundamental_metrics`` under the same
+# ``rule_input`` pseudo-group as the D-13 input -- so no metric consumer, pillar member,
+# applicability-matrix row or prompt ever reads it -- and ``cycle``'s VALORIZATION v2 reads it.
+# Every value is one the filing's own metric rows already carry, on the ratios' basis (a 10-K's
+# fiscal year, a 10-Q's trailing twelve months), which is what lets the score price its measures on
+# the **analysis date** (MKT-01) instead of a period-end price.
+VALUE_INPUTS_METRIC: Final[str] = "value_inputs"
+# The keys of its ``inputs_json``.
+VALUE_INPUTS_NET_INCOME: Final[str] = "net_income_ttm"
+VALUE_INPUTS_EBITDA: Final[str] = "ebitda"
+VALUE_INPUTS_MD38: Final[str] = "md38_numerator"
+VALUE_INPUTS_BOOK_EQUITY: Final[str] = "book_equity"
+VALUE_INPUTS_TOTAL_DEBT: Final[str] = "total_debt"
+VALUE_INPUTS_NCI: Final[str] = "nci"
+VALUE_INPUTS_CASH: Final[str] = "cash"
+VALUE_INPUTS_STI: Final[str] = "short_term_investments"
+# input -> why it is empty (MET-00: never 0, never neutral; the reason is the carrier metric's own
+# ``provenance.empty_reason``).
+VALUE_INPUTS_MISSING: Final[str] = "missing"
+# The flags the EV-bridge terms carry (``flag_<item>_<flag>``), so D2 can record them.
+VALUE_INPUTS_FLAGS: Final[str] = "flags"
 
 
 # -- version constraints (T-093) -------------------------------------------------------------

@@ -16,7 +16,7 @@ from cycle.orchestrator import run_selection
 from fundamental_agent import db
 from fundamental_agent.db import FilingKey, FilingMeta, SnapshotRow
 from fundamental_agent.metrics.base import MetricResult
-from kg_schema import apply_migrations, availability, queries
+from kg_schema import apply_migrations, availability, migrations, queries
 from kg_schema.availability import AvailabilityMissing
 from kg_schema.market_cap import market_caps_as_of
 
@@ -202,8 +202,8 @@ def test_m008_backfills_every_row_and_restores_the_guards(scored: tuple[Database
         "fundamental_metrics": 1,
         "score_snapshot": 1,
     }
-    assert apply_migrations(conn) == [8, 9, 10, 11, 12]
-    assert queries.current_version(conn) == 12
+    assert apply_migrations(conn) == [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+    assert queries.current_version(conn) == max(v for v, _, _ in migrations.MIGRATIONS)
     assert {v for _, v in _available(conn)} == {"2026-02-23"}
     assert availability.missing(conn) == {}
     triggers = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
@@ -291,8 +291,10 @@ def test_the_as_of_consumers_filter_filings_by_available_at_alone() -> None:
 def test_the_scan_sees_the_readers_it_guards() -> None:
     """Guard the guard: the known as-of readers are string literals the scan parses."""
     cycle_sql = _sql_strings(SRC / "cycle" / "data.py")
-    # metrics, data-quality verdicts, the trailing net income of the earnings yield (T-149), fundamentals
-    assert sum("available_at <= ?" in s for s in cycle_sql) == 4
+    # metrics, data-quality verdicts, the trailing net income of the earnings yield (T-149),
+    # fundamentals, the D-13 utility cash-coverage rule input (T-071 part 2a), and the D1
+    # VALORIZATION value inputs (T-071 part 2b)
+    assert sum("available_at <= ?" in s for s in cycle_sql) == 6
     # T-132: the market cap is the shared reader's (cycle and quant no longer read a stored metric
     # for it), whose one filing read is the cover-share query
     quant_sql = _sql_strings(SRC / "quant" / "db.py")

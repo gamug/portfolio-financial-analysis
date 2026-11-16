@@ -7,7 +7,7 @@ import json
 import math
 import random
 import sqlite3
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -16,14 +16,43 @@ import pytest
 from french_support import copy_fixture
 from portfolio_common.db import Database
 
-from fundamental_agent import db
+from fundamental_agent import agents as agent_layer
+from fundamental_agent import db, pipeline
 from fundamental_agent.statements import Statements
 from kg_schema import provenance
-from kg_schema.trading_calendar import available_from
+from kg_schema.trading_calendar import available_from, is_trading_day
 from pricing_agent import db as pricing_db
 from quant import db as quant_db
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_waits() -> Iterator[None]:
+    """The pipeline retries a **service** failure in place, waiting 30 s, 1 min and 2 min.
+
+    The hermetic suite must not wait for real (PR #178, review round 2: CI's pytest went from
+    2 m 38 s to 19 m 52 s, because the older tests raise service-class errors without patching
+    the waits). The waits are zero here; a test that exercises the retry sets them itself.
+    """
+    original = pipeline.RETRY_WAITS_SECONDS
+    pipeline.RETRY_WAITS_SECONDS = (0.0, 0.0, 0.0)
+    yield
+    pipeline.RETRY_WAITS_SECONDS = original
+
+
+@pytest.fixture(autouse=True)
+def _fake_llm_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test reaches ``{LLM_URL}/models``: the resolver parses this local payload instead.
+
+    A test of the resolver itself replaces ``_fetch_models`` again with the response it needs.
+    """
+
+    def fake(settings: object) -> dict[str, object]:
+        model = str(getattr(settings, "llm_model", "test-model"))
+        return {"data": [{"id": model, "object": "model", "name": model}]}
+
+    monkeypatch.setattr(agent_layer, "_fetch_models", fake)
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -79,6 +108,24 @@ def write_universe_db(
         "(symbol, security, gics_sector, gics_sub_industry, cik, valid_from, valid_to, source) "
         "VALUES (?, ?, 'S1', 'SI0', ?, ?, ?, ?)",
         [(sym, f"{sym} Inc.", cik_for(sym), vf, vt, source) for sym, vf, vt in members],
+    )
+    conn.commit()
+    conn.close()
+    return path
+
+
+def write_universe_rows(path: Path, rows: Iterable[tuple[str, str, str, str | None]]) -> Path:
+    """Build a minimal ``universe.db`` from explicit ``(symbol, cik, valid_from, valid_to)`` rows.
+
+    ``write_universe_db`` derives the CIK from the symbol; this one lets two CIK lines share a
+    symbol (the T-143 part A item 9 ``shared symbol`` case)."""
+    conn = sqlite3.connect(path)
+    conn.executescript(_UNIVERSE_DDL)
+    conn.executemany(
+        "INSERT INTO universe_membership "
+        "(symbol, security, gics_sector, gics_sub_industry, cik, valid_from, valid_to, source) "
+        "VALUES (?, ?, 'S1', 'SI0', ?, ?, ?, 'test')",
+        [(sym, f"{sym} Inc.", cik, vf, vt) for sym, cik, vf, vt in rows],
     )
     conn.commit()
     conn.close()
@@ -304,6 +351,49 @@ def memory_quant_db() -> Database:
     return _with_default_cik(conn)
 
 
+def seed_value_inputs(conn: Database, day: str = "2026-06-30") -> None:
+    """T-071 part 2b (D1/D2): a market cap on *day* and the VALORIZATION value inputs, so the
+    ``cycle_seed`` cohort has a **real** VALORIZATION score -- the four measures are priced on the
+    cycle date, so they need both the market cap and D1's rule input."""
+    pricing_db.ensure_schema(conn)
+    for aid in range(1, 6):
+        row = conn.execute("SELECT id FROM sec_filings WHERE asset_id = ?", (aid,)).fetchone()
+        fid = int(row["id"])
+        conn.execute(
+            "INSERT INTO filing_cover_shares (filing_id, class_member, value, as_of_date, "
+            "event_time, ingested_at) VALUES (?, '', 1000.0, '2026-06-20', '2026-06-20', 'now')",
+            (fid,),
+        )
+        prev = (date.fromisoformat(day) - timedelta(days=1)).isoformat()
+        for close_day in (prev, day):
+            conn.execute(
+                "INSERT INTO price_daily (asset_id, date, close) VALUES (?, ?, 10.0)",
+                (aid, close_day),
+            )
+        conn.execute(
+            "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, unit, "
+            "inputs_json, computed_at, engine_version, event_time, available_at) VALUES "
+            "(?, 'rule_input', 'value_inputs', 1.0, 'usd', ?, '2026-06-01T00:00:00Z', "
+            "'metrics-v1', '2025-12-31', '2026-02-02')",
+            (
+                fid,
+                json.dumps(
+                    {
+                        "net_income_ttm": 900.0 - 100 * aid,
+                        "ebitda": 1200.0 - 100 * aid,
+                        "md38_numerator": 400.0 - 40 * aid,
+                        "book_equity": 5000.0 - 500 * aid,
+                        "total_debt": 1000.0,
+                        "nci": 0.0,
+                        "cash": 200.0,
+                        "short_term_investments": 50.0,
+                    }
+                ),
+            ),
+        )
+    conn.commit()
+
+
 def _seed_quarterly_caps(
     conn: Database, asset_id: int, days: list[str], *, enabled: bool = True
 ) -> None:
@@ -436,6 +526,17 @@ def quant_seed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[...,
     return _seed
 
 
+def _sessions(first: str, last: str) -> list[date]:
+    """The NYSE sessions in [first, last] (the calendar the cycle's eligibility reads)."""
+    out: list[date] = []
+    day = date.fromisoformat(first)
+    while day <= date.fromisoformat(last):
+        if is_trading_day(day):
+            out.append(day)
+        day += timedelta(days=1)
+    return out
+
+
 @pytest.fixture
 def cycle_seed(memory_db: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Database:
     conn = memory_db
@@ -475,7 +576,12 @@ def cycle_seed(memory_db: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: P
             "'2026-02-02')",
             (i, 80 - 8 * i, 80 - 8 * i, fid),
         )
-        for d in range(1, 121):
+        # one observation per NYSE session, 2026-01-01..2026-09-30: eligibility (T-153 part 3c)
+        # is a close on the cycle date's own session, so the fixture must hold every session the
+        # tests run at, not a window around one date.
+        for offset, obs_date in enumerate(
+            day.isoformat() for day in _sessions("2026-01-01", "2026-09-30")
+        ):
             conn.execute(
                 "INSERT INTO price_observation (asset_id, obs_date, close, atr_14, "
                 "realized_vol_90d, max_drawdown_90d, momentum_63d, momentum_21d, event_time, "
@@ -483,14 +589,14 @@ def cycle_seed(memory_db: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: P
                 "'2026-06-30T00:00:00Z', 'priceobs-v2')",
                 (
                     i,
-                    f"2026-{1 + d // 28:02d}-{1 + d % 28:02d}",
-                    100.0 + d * (6 - i),
+                    obs_date,
+                    100.0 + offset * (6 - i),
                     2.0 * i,
                     0.10 * i,
                     -0.03 * i,
                     0.25 - 0.06 * i,
                     0.05 - 0.01 * i,
-                    f"2026-{1 + d // 28:02d}-{1 + d % 28:02d}",
+                    obs_date,
                 ),
             )
     conn.commit()

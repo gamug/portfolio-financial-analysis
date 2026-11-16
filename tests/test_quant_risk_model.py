@@ -317,3 +317,64 @@ def test_no_store_cov_skips_the_matrix(
     # metadata + mu still land
     assert conn.execute("SELECT COUNT(*) FROM quant_risk_model").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM quant_expected_return").fetchone()[0] == 3 * 4
+
+
+def test_risk_model_interrupted_rolls_back_all_tables(
+    memory_quant_db: Database,
+    quant_seed: Callable[..., Database],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = quant_seed(memory_quant_db, n_assets=6, n_days=300, with_dividends=False)
+    settings = _prep(conn)
+    as_of = conn.execute("SELECT MAX(obs_date) FROM quant_return_daily").fetchone()[0]
+
+    def _raise_interrupt(*args: object, **kwargs: object) -> object:
+        raise KeyboardInterrupt("simulated interrupt after expected returns")
+
+    monkeypatch.setattr(quant_persist, "insert_covariance", _raise_interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_build_risk_model(settings, as_of=as_of, conn=conn)
+
+    assert (
+        conn.execute("SELECT COUNT(*) FROM quant_risk_model WHERE as_of = ?", (as_of,)).fetchone()[
+            0
+        ]
+        == 0
+    )
+    assert conn.execute("SELECT COUNT(*) FROM quant_expected_return").fetchone()[0] == 0
+    run_row = conn.execute(
+        "SELECT status FROM quant_run WHERE as_of = ? AND command = 'build-risk-model'",
+        (as_of,),
+    ).fetchone()
+    assert run_row is not None and run_row["status"] == "failed"
+
+
+def test_optimize_interrupted_rolls_back_all_tables(
+    memory_quant_db: Database,
+    quant_seed: Callable[..., Database],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = quant_seed(memory_quant_db, n_assets=6, n_days=300, with_dividends=False)
+    settings = _prep(conn)
+    as_of = conn.execute("SELECT MAX(obs_date) FROM quant_return_daily").fetchone()[0]
+    run_build_risk_model(settings, as_of=as_of, conn=conn)
+
+    def _raise_interrupt(*args: object, **kwargs: object) -> object:
+        raise KeyboardInterrupt("simulated interrupt after insert portfolio")
+
+    monkeypatch.setattr(quant_persist, "sync_positions", _raise_interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_optimize(settings, as_of=as_of, conn=conn)
+
+    assert (
+        conn.execute("SELECT COUNT(*) FROM quant_portfolio WHERE as_of = ?", (as_of,)).fetchone()[0]
+        == 0
+    )
+    assert conn.execute("SELECT COUNT(*) FROM quant_position").fetchone()[0] == 0
+    run_row = conn.execute(
+        "SELECT status FROM quant_run WHERE as_of = ? AND command = 'optimize'",
+        (as_of,),
+    ).fetchone()
+    assert run_row is not None and run_row["status"] == "failed"

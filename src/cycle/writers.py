@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from datetime import UTC, date, datetime
+from typing import Any
 
 from portfolio_common.db import Database
 
@@ -74,9 +75,9 @@ def write_scores(  # noqa: PLR0913, PLR0917 - a wide row writer; splitting hurts
     conn: Database,
     score_type: str,
     cycle_date: str,
-    raw: dict[int, float],
-    normalized: dict[int, float],
-    components: dict[int, dict[str, float | None]],
+    raw: Mapping[int, float | None],
+    normalized: Mapping[int, float],
+    components: Mapping[int, Mapping[str, Any]],
     *,
     run_id: int,
     model: str = "deterministic",

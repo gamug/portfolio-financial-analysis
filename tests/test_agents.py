@@ -3,12 +3,21 @@ produced a score -- constant across every filing in a run, not a per-filing tran
 
 from __future__ import annotations
 
+import re
+from dataclasses import replace
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
 from fundamental_agent import agents
 from fundamental_agent.agents import FundamentalAnalyst, _prompt_version_hash
+from fundamental_agent.config import Settings
+from fundamental_agent.metrics import provenance
+from fundamental_agent.metrics.base import MetricResult
+from fundamental_agent.pricing import ClosePrice
+from fundamental_agent.skills import GROUP_METRICS
+from fundamental_agent.statements import Statements
 
 
 def _analyst(model_name: str = "deepseek-chat") -> FundamentalAnalyst:
@@ -26,11 +35,18 @@ def test_two_filings_in_one_run_share_the_same_prompt_hash() -> None:
 
 
 def test_changing_one_specialist_prompt_changes_the_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T-076: a specialist's prompt is its skill (and the generated blocks), so rewriting one skill
+    changes the version hash. Replaces the T-113 version that patched the removed inline prompts."""
     before = _prompt_version_hash("deepseek-chat")
-    monkeypatch.setitem(
-        agents._INLINE_SPECIALIST_PROMPTS,
-        "profitability",
-        "a rewritten profitability specialist prompt",
+    real = agents.load_skill
+    monkeypatch.setattr(
+        agents,
+        "load_skill",
+        lambda group: (
+            "a rewritten profitability specialist prompt"
+            if group == "profitability"
+            else real(group)
+        ),
     )
     after = _prompt_version_hash("deepseek-chat")
     assert before != after
@@ -38,3 +54,365 @@ def test_changing_one_specialist_prompt_changes_the_hash(monkeypatch: pytest.Mon
 
 def test_changing_the_model_id_changes_the_hash() -> None:
     assert _prompt_version_hash("deepseek-chat") != _prompt_version_hash("deepseek-reasoner")
+
+
+# -- T-076, D3: the 10-Q basis paragraph -------------------------------------------------------------------
+
+_BASIS_LABELS = {
+    "ttm": "trailing twelve months",
+    "period": "this filing's own quarter",
+    "prior_year": "the prior fiscal year end",
+    "prior": "the same quarter a year earlier",
+}
+
+
+def _labels(items: dict[str, Any]) -> set[str]:
+    return {
+        _BASIS_LABELS[basis]
+        for bases in items.values()
+        for basis in ((bases,) if isinstance(bases, str) else bases)
+    }
+
+
+@pytest.mark.parametrize("group", sorted(GROUP_METRICS))
+def test_the_basis_paragraph_names_exactly_each_metrics_bases(group: str) -> None:
+    results = [
+        MetricResult(name, 1.0, "usd" if name in {"nopat", "ebitda"} else "ratio", {})
+        for name in GROUP_METRICS[group]
+    ]
+    paragraph = agents.basis_paragraph(group, results)
+    assert paragraph
+    for line in paragraph.splitlines()[1:]:
+        name, _, rest = line.partition(": ")
+        expected = _labels(provenance.ITEMS.get(name, {}))
+        assert expected, (group, name)
+        assert {label for label in _BASIS_LABELS.values() if f"({label})" in rest} == expected, (
+            group,
+            name,
+        )
+
+
+def test_a_ten_q_brief_carries_the_basis_paragraph_and_a_ten_k_does_not(
+    aapl_10k: Statements,
+) -> None:
+    results = {"profitability": [MetricResult("net_margin", 0.1, "ratio", {})]}
+    ten_k = agents.FilingContext(
+        "AAPL", "Apple", "10-K", "FY2023", aapl_10k, "2023-09-30 (FY)", None
+    )
+    ten_q = replace(ten_k, form="10-Q")
+    assert "Basis of the numbers below" not in agents._brief(ten_k, results)
+    assert "Basis of the numbers below" in agents._brief(ten_q, results)
+
+
+# -- T-076, D4: an empty metric reaches the brief with its reason -------------------------------------------
+
+
+def test_an_empty_metric_reaches_the_brief_with_its_reason() -> None:
+    empty = MetricResult(
+        "quick_ratio", None, "ratio", {"provenance": {"empty_reason": "not_applicable"}}
+    )
+    assert agents._metric_lines("liquidity", [empty]) == ["quick_ratio: empty (not_applicable)"]
+    assert agents._metric_lines("liquidity", [MetricResult("cash_ratio", 1.5, "ratio", {})]) == [
+        "cash_ratio: 1.5"
+    ]
+
+
+# -- T-076, D5: a HARD DQ screen withholds a value -----------------------------------------------------------
+
+
+def _all_present() -> dict[str, Any]:
+    """T-073: a filing whose four pillars all carry a value, for the fallback's own tests."""
+    return agents.pillars.pillar_statuses(
+        [
+            (
+                pillar,
+                MetricResult(
+                    name,
+                    1.0,
+                    "ratio",
+                    {"current_assets": 100.0, "current_liabilities": 50.0}
+                    if name == "current_ratio"
+                    else {},
+                ),
+            )
+            for pillar, names in agents.pillars.PILLARS.items()
+            for name in names
+        ]
+    )
+
+
+def test_a_hard_screen_withholds_a_value_from_the_model_and_the_fallback() -> None:
+    # |net_margin| > 5 trips DQ_MARGIN (Annex A-01): the value is withheld, not read.
+    result = MetricResult("net_margin", 6.0, "ratio", {})
+    withheld = agents.withheld_metrics([("profitability", result)])
+    assert withheld == {("profitability", "net_margin"): "DQ_MARGIN"}
+    assert agents._metric_lines("profitability", [result], withheld) == [
+        "net_margin: withheld (DQ_MARGIN)"
+    ]
+    # T-073 (D3): the fallback rates each pillar 50 plus its own metrics' nudges, and the total is
+    # the weighted pillar ratings -- so the net-margin rule's 12 points lift profitability to 62 and
+    # the total to (62 + 50 + 50 + 50) / 4. Withheld, they lift nothing and the total stays 50.
+    statuses = _all_present()
+    lifted = agents._fallback_synthesis({"profitability.net_margin": 6.0}, statuses)
+    assert lifted.assessment.score == 53.0
+    assert lifted.pillars["pillars"]["profitability"]["rating"] == 62
+    assert (
+        agents._fallback_synthesis(
+            {"profitability.net_margin": 6.0}, statuses, withheld
+        ).assessment.score
+        == 50.0
+    )
+
+
+def test_a_clean_metric_is_not_withheld() -> None:
+    result = MetricResult("net_margin", 0.1, "ratio", {})
+    assert agents.withheld_metrics([("profitability", result)]) == {}
+
+
+def test_an_empty_value_keeps_its_own_reason_when_a_gate_would_quarantine_it() -> None:
+    """K5: a negative-equity filing can trip DQ_NEG_EQUITY, which quarantines D/E and ROE. Both are already
+    empty (APP-07), so neither is relabelled as a data-quality matter -- negative equity is not a data error:
+    ROE keeps its own `not_applicable` reason."""
+    results = [
+        (
+            "profitability",
+            MetricResult(
+                "return_on_equity",
+                None,
+                "ratio",
+                {"equity": -1.0, "provenance": {"empty_reason": "not_applicable"}},
+            ),
+        ),
+        ("leverage", MetricResult("debt_to_equity", None, "ratio", {"equity": -1.0})),
+        (
+            "leverage",
+            MetricResult("net_debt_to_ebitda", 8.0, "x", {"total_debt": 9.0, "cash": 1.0}),
+        ),
+    ]
+    assert agents.withheld_metrics(results) == {}
+    assert agents._metric_lines("profitability", [results[0][1]], {}) == [
+        "return_on_equity: empty (not_applicable)"
+    ]
+
+
+# -- T-153 part 3d, A3: the private import's valuation values never reach the model -------------
+
+
+def _valuation_results() -> list[tuple[str, MetricResult]]:
+    """The valuation group as ``_compute_all`` emits it, plus one empty and one other group."""
+    return [
+        ("valuation", MetricResult("market_capitalization", 2_700_000_000_000.0, "usd", {})),
+        ("valuation", MetricResult("enterprise_value", 2_800_000_000_000.0, "usd", {})),
+        ("valuation", MetricResult("free_cash_flow_yield", 0.031, "ratio", {})),
+        ("valuation", MetricResult("sbc_adjusted_fcf_yield", 0.028, "ratio", {})),
+        ("valuation", MetricResult("enterprise_fcf_yield", 0.024, "ratio", {})),
+        (
+            "valuation",
+            MetricResult(
+                "market_capitalization_empty",
+                None,
+                "usd",
+                {"provenance": {"empty_reason": "missing_input"}},
+            ),
+        ),
+        ("profitability", MetricResult("net_margin", 0.25, "ratio", {})),
+    ]
+
+
+def _tiingo_ctx(aapl_10k: Statements, *, source: str) -> agents.FilingContext:
+    return agents.FilingContext(
+        "AAPL",
+        "Apple",
+        "10-K",
+        "FY2023",
+        aapl_10k,
+        "2023-09-30 (FY)",
+        None,
+        price=ClosePrice(date="2023-09-29", close=171.21, source=source),
+    )
+
+
+def test_a_tiingo_close_withholds_every_valuation_value_from_the_prompt(
+    aapl_10k: Statements,
+) -> None:
+    """A3: the brief and every specialist print `withheld (TIINGO_CLOSE)` -- never a value."""
+    ctx = _tiingo_ctx(aapl_10k, source="tiingo")
+    computed = _valuation_results()
+    by_group = agents._group(computed)
+    withheld = agents.withheld_metrics(computed)
+    withheld.update(agents.tiingo_withheld_metrics(ctx, computed))
+
+    valuation = agents._metric_lines("valuation", by_group["valuation"], withheld)
+    brief = agents._brief(ctx, by_group, withheld)
+    for prompt in (brief, "\n".join(valuation)):
+        assert "withheld (TIINGO_CLOSE)" in prompt
+        for value in ("2700000000000", "2800000000000", "0.031", "0.028", "0.024"):
+            assert value not in prompt, (value, prompt)
+        # A-1.3: the absolute USD lines are dropped from every prompt, not merely withheld.
+        assert "market_capitalization" not in prompt
+        assert "enterprise_value" not in prompt
+    assert valuation == [
+        "free_cash_flow_yield: withheld (TIINGO_CLOSE)",
+        "sbc_adjusted_fcf_yield: withheld (TIINGO_CLOSE)",
+        "enterprise_fcf_yield: withheld (TIINGO_CLOSE)",
+    ]
+    assert "net_margin: 0.25" in brief  # a non-valuation metric is untouched
+
+
+def test_the_gateway_close_withholds_nothing_and_a_tiingo_close_changes_no_score(
+    aapl_10k: Statements,
+) -> None:
+    """A3: the map is per row and the fallback's score is unmoved by it (the valuation nudge
+    leaves the score -- valuation is no pillar)."""
+    computed = _valuation_results()
+    gateway = _tiingo_ctx(aapl_10k, source="yfinance")
+    assert agents.tiingo_withheld_metrics(gateway, computed) == {}
+
+    tiingo = _tiingo_ctx(aapl_10k, source="tiingo")
+    mapped = agents.tiingo_withheld_metrics(tiingo, computed)
+    assert set(mapped) == {
+        ("valuation", "market_capitalization"),
+        ("valuation", "enterprise_value"),
+        ("valuation", "free_cash_flow_yield"),
+        ("valuation", "sbc_adjusted_fcf_yield"),
+        ("valuation", "enterprise_fcf_yield"),
+    }
+    statuses = _all_present()
+    flat: dict[str, float | None] = {
+        "valuation.free_cash_flow_yield": 0.031,
+        "profitability.net_margin": 0.25,
+    }
+    without = agents._fallback_synthesis(flat, statuses, {})
+    with_tiingo = agents._fallback_synthesis(flat, statuses, mapped)
+    assert with_tiingo.assessment.score == without.assessment.score
+    assert with_tiingo.pillars == without.pillars
+
+
+def test_the_tiingo_map_never_changes_which_metrics_the_hard_rules_withhold() -> None:
+    """A3's stop-and-ask condition: the DQ map is built first and the Tiingo map is merged after,
+    so a key the rules already withhold stays withheld and no new key appears from them."""
+    rule = MetricResult("net_margin", 6.0, "ratio", {"revenue": 100.0, "net_income": 6.0})
+    results = [("profitability", rule)]
+    assert agents.withheld_metrics(results) == {("profitability", "net_margin"): "DQ_MARGIN"}
+    merged = agents.withheld_metrics(results)
+    merged.update(
+        {
+            key: reason
+            for key, reason in {
+                ("profitability", "net_margin"): agents.TIINGO_CLOSE_REASON,
+                ("valuation", "market_capitalization"): agents.TIINGO_CLOSE_REASON,
+            }.items()
+            if key not in merged
+        }
+    )
+    # the overlap keeps the rule's own reason; the new key is added
+    assert merged[("profitability", "net_margin")] == "DQ_MARGIN"
+    assert merged[("valuation", "market_capitalization")] == agents.TIINGO_CLOSE_REASON
+    assert agents._metric_lines("profitability", [rule], merged) == [
+        "net_margin: withheld (DQ_MARGIN)"
+    ]
+
+
+# -- LLM pilot Part 1: explicit thinking, resolved model, anonymized prompts -----------------
+
+
+def _settings(**overrides: Any) -> Settings:
+    base: dict[str, Any] = {
+        "db_path": Path(":memory:"),
+        "llm_api_key": "k",
+        "llm_model": "deepseek-flash",
+        "llm_url": "https://api.deepseek.com",
+    }
+    base.update(overrides)
+    return Settings(**base)
+
+
+def test_build_model_sends_explicit_thinking_disabled_and_temperature_zero() -> None:
+    model = agents.build_model(_settings(llm_thinking="disabled"))
+    params = cast(dict[str, Any], model.config["params"])
+    assert params["temperature"] == 0
+    assert params["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert "reasoning_effort" not in params
+
+
+@pytest.mark.parametrize("effort", ["low", "high", "max"])
+def test_build_model_sends_the_enabled_thinking_mode_and_effort(effort: str) -> None:
+    model = agents.build_model(_settings(llm_thinking="enabled", llm_reasoning_effort=effort))
+    params = cast(dict[str, Any], model.config["params"])
+    assert "temperature" not in params
+    assert params["reasoning_effort"] == effort
+    assert params["extra_body"] == {"thinking": {"type": "enabled"}}
+
+
+def test_resolve_llm_model_records_the_name_and_the_response_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        agents,
+        "_fetch_models",
+        lambda _settings: {
+            "data": [
+                {
+                    "id": "deepseek-flash",
+                    "name": "DeepSeek-V4.1-Flash",
+                    "model": "DeepSeek-V4.1-Flash-1017",
+                }
+            ]
+        },
+    )
+    meta = agents.resolve_llm_model(_settings(llm_thinking="enabled", llm_reasoning_effort="max"))
+    assert (meta.requested, meta.resolved, meta.model_id) == (
+        "deepseek-flash",
+        "DeepSeek-V4.1-Flash",
+        "deepseek-flash",
+    )
+    assert meta.response_model == "DeepSeek-V4.1-Flash-1017"
+    assert meta.label == "DeepSeek-V4.1-Flash [thinking=enabled, effort=max]"
+    assert meta.as_dict()["thinking"] == "enabled"
+    assert meta.as_dict()["reasoning_effort_used"] is True
+
+
+def test_an_unknown_alias_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(agents, "_fetch_models", lambda _settings: {"data": [{"id": "other"}]})
+    with pytest.raises(RuntimeError, match="not in"):
+        agents.resolve_llm_model(_settings())
+
+
+def test_the_brief_and_every_specialist_prompt_carry_no_identity_or_year(
+    aapl_10k: Statements,
+) -> None:
+    ctx = agents.FilingContext(
+        "AAPL",
+        "Apple Inc.",
+        "10-K",
+        "FY2023",
+        aapl_10k,
+        "2023-09-30 (FY)",
+        None,
+        cik="0000320193",
+    )
+    results = {"profitability": [MetricResult("net_margin", 0.2, "ratio", {})]}
+    prompts = [agents._brief(ctx, results)]
+    prompts += [agents._specialist_system_prompt(group) for group in agents._SPECIALIST_GROUPS]
+    for prompt in prompts:
+        for forbidden in ("AAPL", "Apple", "0000320193"):
+            assert forbidden not in prompt, forbidden
+        assert not any(1900 <= int(year) <= 2099 for year in re.findall(r"\b\d{4}\b", prompt))
+
+
+def test_absolute_usd_amounts_are_dropped_from_the_prompt() -> None:
+    results = [
+        MetricResult("ebitda", 123.0, "usd", {}),
+        MetricResult("nopat", 45.0, "usd", {}),
+        MetricResult("market_capitalization", 10.0, "usd", {}),
+        MetricResult("enterprise_value", 11.0, "usd", {}),
+        MetricResult("debt_to_equity", 0.5, "x", {}),
+    ]
+    assert agents._metric_lines("leverage", results) == ["debt_to_equity: 0.5"]
+
+
+def test_the_prompt_hash_changes_with_the_thinking_mode_and_effort() -> None:
+    disabled = _prompt_version_hash("deepseek-flash", thinking="disabled")
+    high = _prompt_version_hash("deepseek-flash", thinking="enabled", reasoning_effort="high")
+    maximum = _prompt_version_hash("deepseek-flash", thinking="enabled", reasoning_effort="max")
+    assert len({disabled, high, maximum}) == 3

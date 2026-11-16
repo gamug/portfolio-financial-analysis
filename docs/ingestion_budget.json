@@ -1,0 +1,5321 @@
+{
+ "analysis_date": "2026-10-14",
+ "detail": [
+  {
+   "cik": "0000001800",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ABT"
+  },
+  {
+   "cik": "0000002488",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AMD"
+  },
+  {
+   "cik": "0000002969",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "APD"
+  },
+  {
+   "cik": "0000004127",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SWKS"
+  },
+  {
+   "cik": "0000004281",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HWM"
+  },
+  {
+   "cik": "0000004447",
+   "filings": 14,
+   "group": "leaver",
+   "last_membership_day": "2025-07-22",
+   "membership_days": 890,
+   "never_latest": 0,
+   "symbols": "HES"
+  },
+  {
+   "cik": "0000004904",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AEP"
+  },
+  {
+   "cik": "0000004962",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AXP"
+  },
+  {
+   "cik": "0000004977",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AFL"
+  },
+  {
+   "cik": "0000005272",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AIG"
+  },
+  {
+   "cik": "0000006201",
+   "filings": 11,
+   "group": "leaver",
+   "last_membership_day": "2024-09-22",
+   "membership_days": 683,
+   "never_latest": 0,
+   "symbols": "AAL"
+  },
+  {
+   "cik": "0000006281",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ADI"
+  },
+  {
+   "cik": "0000006951",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AMAT"
+  },
+  {
+   "cik": "0000007084",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ADM"
+  },
+  {
+   "cik": "0000008670",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ADP"
+  },
+  {
+   "cik": "0000008818",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AVY"
+  },
+  {
+   "cik": "0000009389",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BALL"
+  },
+  {
+   "cik": "0000010456",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BAX"
+  },
+  {
+   "cik": "0000010795",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BDX"
+  },
+  {
+   "cik": "0000011544",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "WRB"
+  },
+  {
+   "cik": "0000012208",
+   "filings": 11,
+   "group": "leaver",
+   "last_membership_day": "2024-09-22",
+   "membership_days": 683,
+   "never_latest": 0,
+   "symbols": "BIO"
+  },
+  {
+   "cik": "0000012927",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BA"
+  },
+  {
+   "cik": "0000014272",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BMY"
+  },
+  {
+   "cik": "0000014693",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BF.B"
+  },
+  {
+   "cik": "0000016732",
+   "filings": 18,
+   "group": "leaver",
+   "last_membership_day": "2026-06-21",
+   "membership_days": 1119,
+   "never_latest": 0,
+   "symbols": "CPB"
+  },
+  {
+   "cik": "0000016918",
+   "filings": 20,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "STZ"
+  },
+  {
+   "cik": "0000018230",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CAT"
+  },
+  {
+   "cik": "0000018926",
+   "filings": 5,
+   "group": "leaver",
+   "last_membership_day": "2023-03-19",
+   "membership_days": 303,
+   "never_latest": 0,
+   "symbols": "LUMN"
+  },
+  {
+   "cik": "0000019617",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "JPM"
+  },
+  {
+   "cik": "0000020286",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CINF"
+  },
+  {
+   "cik": "0000021076",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CLX"
+  },
+  {
+   "cik": "0000021344",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "KO"
+  },
+  {
+   "cik": "0000021665",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CL"
+  },
+  {
+   "cik": "0000023217",
+   "filings": 18,
+   "group": "leaver",
+   "last_membership_day": "2026-06-29",
+   "membership_days": 1125,
+   "never_latest": 0,
+   "symbols": "CAG"
+  },
+  {
+   "cik": "0000024545",
+   "filings": 19,
+   "group": "leaver",
+   "last_membership_day": "2026-09-20",
+   "membership_days": 1182,
+   "never_latest": 0,
+   "symbols": "TAP"
+  },
+  {
+   "cik": "0000024741",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GLW"
+  },
+  {
+   "cik": "0000026172",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CMI"
+  },
+  {
+   "cik": "0000027419",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TGT"
+  },
+  {
+   "cik": "0000027904",
+   "filings": 20,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DAL"
+  },
+  {
+   "cik": "0000028412",
+   "filings": 10,
+   "group": "leaver",
+   "last_membership_day": "2024-06-23",
+   "membership_days": 620,
+   "never_latest": 0,
+   "symbols": "CMA"
+  },
+  {
+   "cik": "0000029534",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DG"
+  },
+  {
+   "cik": "0000029905",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DOV"
+  },
+  {
+   "cik": "0000029989",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "OMC"
+  },
+  {
+   "cik": "0000031462",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ECL"
+  },
+  {
+   "cik": "0000031791",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "RVTY"
+  },
+  {
+   "cik": "0000032604",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "EMR"
+  },
+  {
+   "cik": "0000033185",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "EFX"
+  },
+  {
+   "cik": "0000033213",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1012,
+   "never_latest": 2,
+   "symbols": "EQT"
+  },
+  {
+   "cik": "0000034903",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FRT"
+  },
+  {
+   "cik": "0000035527",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FITB"
+  },
+  {
+   "cik": "0000036104",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "USB"
+  },
+  {
+   "cik": "0000036270",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MTB"
+  },
+  {
+   "cik": "0000037785",
+   "filings": 13,
+   "group": "leaver",
+   "last_membership_day": "2025-03-23",
+   "membership_days": 807,
+   "never_latest": 0,
+   "symbols": "FMC"
+  },
+  {
+   "cik": "0000037996",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "F"
+  },
+  {
+   "cik": "0000038777",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BEN"
+  },
+  {
+   "cik": "0000039911",
+   "filings": 0,
+   "group": "leaver",
+   "last_membership_day": "2022-02-02",
+   "membership_days": 22,
+   "never_latest": 0,
+   "symbols": "GPS"
+  },
+  {
+   "cik": "0000040533",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GD"
+  },
+  {
+   "cik": "0000040545",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GE"
+  },
+  {
+   "cik": "0000040704",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GIS"
+  },
+  {
+   "cik": "0000040987",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GPC"
+  },
+  {
+   "cik": "0000045012",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HAL"
+  },
+  {
+   "cik": "0000046080",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HAS"
+  },
+  {
+   "cik": "0000047111",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HSY"
+  },
+  {
+   "cik": "0000047217",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HPQ"
+  },
+  {
+   "cik": "0000048465",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HRL"
+  },
+  {
+   "cik": "0000048898",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 750,
+   "never_latest": 6,
+   "symbols": "HUBB"
+  },
+  {
+   "cik": "0000049071",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HUM"
+  },
+  {
+   "cik": "0000049196",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HBAN"
+  },
+  {
+   "cik": "0000049826",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ITW"
+  },
+  {
+   "cik": "0000050863",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "INTC"
+  },
+  {
+   "cik": "0000051143",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "IBM"
+  },
+  {
+   "cik": "0000051253",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "IFF"
+  },
+  {
+   "cik": "0000051434",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "IP"
+  },
+  {
+   "cik": "0000051644",
+   "filings": 16,
+   "group": "leaver",
+   "last_membership_day": "2025-11-27",
+   "membership_days": 980,
+   "never_latest": 0,
+   "symbols": "IPG"
+  },
+  {
+   "cik": "0000052988",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "J"
+  },
+  {
+   "cik": "0000055067",
+   "filings": 16,
+   "group": "leaver",
+   "last_membership_day": "2025-12-10",
+   "membership_days": 989,
+   "never_latest": 0,
+   "symbols": "K"
+  },
+  {
+   "cik": "0000055785",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "KMB"
+  },
+  {
+   "cik": "0000056873",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "KR"
+  },
+  {
+   "cik": "0000059478",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "LLY"
+  },
+  {
+   "cik": "0000059558",
+   "filings": 7,
+   "group": "leaver",
+   "last_membership_day": "2023-09-17",
+   "membership_days": 428,
+   "never_latest": 0,
+   "symbols": "LNC"
+  },
+  {
+   "cik": "0000060086",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "L"
+  },
+  {
+   "cik": "0000060667",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "LOW"
+  },
+  {
+   "cik": "0000062709",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MRSH"
+  },
+  {
+   "cik": "0000062996",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MAS"
+  },
+  {
+   "cik": "0000063754",
+   "filings": 20,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MKC"
+  },
+  {
+   "cik": "0000063908",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MCD"
+  },
+  {
+   "cik": "0000064040",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SPGI"
+  },
+  {
+   "cik": "0000064803",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CVS"
+  },
+  {
+   "cik": "0000065984",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ETR"
+  },
+  {
+   "cik": "0000066740",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MMM"
+  },
+  {
+   "cik": "0000068505",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MSI"
+  },
+  {
+   "cik": "0000070858",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BAC"
+  },
+  {
+   "cik": "0000072331",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1170,
+   "never_latest": 0,
+   "symbols": "NDSN"
+  },
+  {
+   "cik": "0000072741",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ES"
+  },
+  {
+   "cik": "0000072903",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "XEL"
+  },
+  {
+   "cik": "0000072971",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "WFC"
+  },
+  {
+   "cik": "0000073124",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NTRS"
+  },
+  {
+   "cik": "0000073309",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NUE"
+  },
+  {
+   "cik": "0000074208",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "UDR"
+  },
+  {
+   "cik": "0000075362",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PCAR"
+  },
+  {
+   "cik": "0000075677",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PKG"
+  },
+  {
+   "cik": "0000076334",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PH"
+  },
+  {
+   "cik": "0000077360",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PNR"
+  },
+  {
+   "cik": "0000077476",
+   "filings": 20,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PEP"
+  },
+  {
+   "cik": "0000078003",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PFE"
+  },
+  {
+   "cik": "0000078239",
+   "filings": 3,
+   "group": "leaver",
+   "last_membership_day": "2022-09-18",
+   "membership_days": 178,
+   "never_latest": 0,
+   "symbols": "PVH"
+  },
+  {
+   "cik": "0000079282",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BRO"
+  },
+  {
+   "cik": "0000079879",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PPG"
+  },
+  {
+   "cik": "0000080424",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PG"
+  },
+  {
+   "cik": "0000080661",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PGR"
+  },
+  {
+   "cik": "0000084839",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ROL"
+  },
+  {
+   "cik": "0000086312",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TRV"
+  },
+  {
+   "cik": "0000087347",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SLB"
+  },
+  {
+   "cik": "0000089800",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SHW"
+  },
+  {
+   "cik": "0000091142",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AOS"
+  },
+  {
+   "cik": "0000091419",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SJM"
+  },
+  {
+   "cik": "0000091440",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SNA"
+  },
+  {
+   "cik": "0000091576",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "KEY"
+  },
+  {
+   "cik": "0000092122",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SO"
+  },
+  {
+   "cik": "0000092230",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TFC"
+  },
+  {
+   "cik": "0000092380",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "LUV"
+  },
+  {
+   "cik": "0000093410",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CVX"
+  },
+  {
+   "cik": "0000093556",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SWK"
+  },
+  {
+   "cik": "0000093751",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "STT"
+  },
+  {
+   "cik": "0000096021",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SYY"
+  },
+  {
+   "cik": "0000096943",
+   "filings": 13,
+   "group": "leaver",
+   "last_membership_day": "2025-03-23",
+   "membership_days": 807,
+   "never_latest": 0,
+   "symbols": "TFX"
+  },
+  {
+   "cik": "0000097210",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TER"
+  },
+  {
+   "cik": "0000097476",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TXN"
+  },
+  {
+   "cik": "0000097745",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TMO"
+  },
+  {
+   "cik": "0000100493",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TSN"
+  },
+  {
+   "cik": "0000100517",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "UAL"
+  },
+  {
+   "cik": "0000100885",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "UNP"
+  },
+  {
+   "cik": "0000101778",
+   "filings": 12,
+   "group": "leaver",
+   "last_membership_day": "2024-11-25",
+   "membership_days": 729,
+   "never_latest": 0,
+   "symbols": "MRO"
+  },
+  {
+   "cik": "0000101829",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "RTX"
+  },
+  {
+   "cik": "0000103379",
+   "filings": 9,
+   "group": "leaver",
+   "last_membership_day": "2024-04-02",
+   "membership_days": 564,
+   "never_latest": 0,
+   "symbols": "VFC"
+  },
+  {
+   "cik": "0000104169",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "WMT"
+  },
+  {
+   "cik": "0000105634",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 268,
+   "never_latest": 14,
+   "symbols": "EME"
+  },
+  {
+   "cik": "0000105770",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "WST"
+  },
+  {
+   "cik": "0000106040",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "WDC"
+  },
+  {
+   "cik": "0000106535",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "WY"
+  },
+  {
+   "cik": "0000106640",
+   "filings": 9,
+   "group": "leaver",
+   "last_membership_day": "2024-03-17",
+   "membership_days": 553,
+   "never_latest": 0,
+   "symbols": "WHR"
+  },
+  {
+   "cik": "0000107263",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "WMB"
+  },
+  {
+   "cik": "0000109198",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TJX"
+  },
+  {
+   "cik": "0000109380",
+   "filings": 9,
+   "group": "leaver",
+   "last_membership_day": "2024-03-17",
+   "membership_days": 553,
+   "never_latest": 0,
+   "symbols": "ZION"
+  },
+  {
+   "cik": "0000200406",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "JNJ"
+  },
+  {
+   "cik": "0000202058",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "LHX"
+  },
+  {
+   "cik": "0000217346",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TXT"
+  },
+  {
+   "cik": "0000277135",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GWW"
+  },
+  {
+   "cik": "0000277948",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CSX"
+  },
+  {
+   "cik": "0000310158",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MRK"
+  },
+  {
+   "cik": "0000310764",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SYK"
+  },
+  {
+   "cik": "0000313616",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DHR"
+  },
+  {
+   "cik": "0000313927",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CHD"
+  },
+  {
+   "cik": "0000315189",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DE"
+  },
+  {
+   "cik": "0000315213",
+   "filings": 10,
+   "group": "leaver",
+   "last_membership_day": "2024-06-23",
+   "membership_days": 620,
+   "never_latest": 0,
+   "symbols": "RHI"
+  },
+  {
+   "cik": "0000315293",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AON"
+  },
+  {
+   "cik": "0000316709",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SCHW"
+  },
+  {
+   "cik": "0000318154",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AMGN"
+  },
+  {
+   "cik": "0000319201",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "KLAC"
+  },
+  {
+   "cik": "0000320187",
+   "filings": 20,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NKE"
+  },
+  {
+   "cik": "0000320193",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AAPL"
+  },
+  {
+   "cik": "0000320335",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GL"
+  },
+  {
+   "cik": "0000352541",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "LNT"
+  },
+  {
+   "cik": "0000352915",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "UHS"
+  },
+  {
+   "cik": "0000354190",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AJG"
+  },
+  {
+   "cik": "0000354950",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HD"
+  },
+  {
+   "cik": "0000701985",
+   "filings": 11,
+   "group": "leaver",
+   "last_membership_day": "2024-09-30",
+   "membership_days": 689,
+   "never_latest": 0,
+   "symbols": "BBWI"
+  },
+  {
+   "cik": "0000702165",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NSC"
+  },
+  {
+   "cik": "0000707549",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "LRCX"
+  },
+  {
+   "cik": "0000711404",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "COO"
+  },
+  {
+   "cik": "0000712515",
+   "filings": 19,
+   "group": "leaver",
+   "last_membership_day": "2026-08-04",
+   "membership_days": 1150,
+   "never_latest": 0,
+   "symbols": "EA"
+  },
+  {
+   "cik": "0000713676",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PNC"
+  },
+  {
+   "cik": "0000715957",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "D"
+  },
+  {
+   "cik": "0000718877",
+   "filings": 7,
+   "group": "leaver",
+   "last_membership_day": "2023-10-17",
+   "membership_days": 450,
+   "never_latest": 0,
+   "symbols": "ATVI"
+  },
+  {
+   "cik": "0000719739",
+   "filings": 5,
+   "group": "leaver",
+   "last_membership_day": "2023-03-14",
+   "membership_days": 300,
+   "never_latest": 0,
+   "symbols": "SIVB"
+  },
+  {
+   "cik": "0000719955",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 393,
+   "never_latest": 11,
+   "symbols": "WSM"
+  },
+  {
+   "cik": "0000720005",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "RJF"
+  },
+  {
+   "cik": "0000721371",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CAH"
+  },
+  {
+   "cik": "0000723125",
+   "filings": 20,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MU"
+  },
+  {
+   "cik": "0000723254",
+   "filings": 20,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CTAS"
+  },
+  {
+   "cik": "0000723531",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PAYX"
+  },
+  {
+   "cik": "0000726728",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "O"
+  },
+  {
+   "cik": "0000726958",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 131,
+   "never_latest": 16,
+   "symbols": "CASY"
+  },
+  {
+   "cik": "0000728535",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "JBHT"
+  },
+  {
+   "cik": "0000731766",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "UNH"
+  },
+  {
+   "cik": "0000731802",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ATO"
+  },
+  {
+   "cik": "0000732712",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "VZ"
+  },
+  {
+   "cik": "0000732717",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "T"
+  },
+  {
+   "cik": "0000740260",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "VTR"
+  },
+  {
+   "cik": "0000743988",
+   "filings": 1,
+   "group": "leaver",
+   "last_membership_day": "2022-02-14",
+   "membership_days": 30,
+   "never_latest": 0,
+   "symbols": "XLNX"
+  },
+  {
+   "cik": "0000745732",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ROST"
+  },
+  {
+   "cik": "0000746515",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "EXPD"
+  },
+  {
+   "cik": "0000749251",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "IT"
+  },
+  {
+   "cik": "0000753308",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NEE"
+  },
+  {
+   "cik": "0000759944",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CFG"
+  },
+  {
+   "cik": "0000764180",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MO"
+  },
+  {
+   "cik": "0000764478",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BBY"
+  },
+  {
+   "cik": "0000764622",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PNW"
+  },
+  {
+   "cik": "0000765880",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DOC"
+  },
+  {
+   "cik": "0000766421",
+   "filings": 8,
+   "group": "leaver",
+   "last_membership_day": "2023-12-17",
+   "membership_days": 492,
+   "never_latest": 0,
+   "symbols": "ALK"
+  },
+  {
+   "cik": "0000766704",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "WELL"
+  },
+  {
+   "cik": "0000769397",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 1,
+   "symbols": "ADSK"
+  },
+  {
+   "cik": "0000773840",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HON"
+  },
+  {
+   "cik": "0000779152",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "JKHY"
+  },
+  {
+   "cik": "0000783280",
+   "filings": 3,
+   "group": "leaver",
+   "last_membership_day": "2022-10-02",
+   "membership_days": 188,
+   "never_latest": 0,
+   "symbols": "DRE"
+  },
+  {
+   "cik": "0000783325",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "WEC"
+  },
+  {
+   "cik": "0000788784",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PEG"
+  },
+  {
+   "cik": "0000789019",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MSFT"
+  },
+  {
+   "cik": "0000789570",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MGM"
+  },
+  {
+   "cik": "0000796343",
+   "filings": 20,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ADBE"
+  },
+  {
+   "cik": "0000797468",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "OXY"
+  },
+  {
+   "cik": "0000798354",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FISV"
+  },
+  {
+   "cik": "0000804328",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "QCOM"
+  },
+  {
+   "cik": "0000804753",
+   "filings": 2,
+   "group": "leaver",
+   "last_membership_day": "2022-06-07",
+   "membership_days": 108,
+   "never_latest": 0,
+   "symbols": "CERN"
+  },
+  {
+   "cik": "0000811156",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CMS"
+  },
+  {
+   "cik": "0000813672",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CDNS"
+  },
+  {
+   "cik": "0000814453",
+   "filings": 7,
+   "group": "leaver",
+   "last_membership_day": "2023-09-17",
+   "membership_days": 428,
+   "never_latest": 0,
+   "symbols": "NWL"
+  },
+  {
+   "cik": "0000814547",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 897,
+   "never_latest": 4,
+   "symbols": "FICO"
+  },
+  {
+   "cik": "0000815094",
+   "filings": 4,
+   "group": "leaver",
+   "last_membership_day": "2022-12-21",
+   "membership_days": 245,
+   "never_latest": 0,
+   "symbols": "ABMD"
+  },
+  {
+   "cik": "0000815097",
+   "filings": 20,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CCL"
+  },
+  {
+   "cik": "0000815556",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FAST"
+  },
+  {
+   "cik": "0000818479",
+   "filings": 9,
+   "group": "leaver",
+   "last_membership_day": "2024-04-02",
+   "membership_days": 564,
+   "never_latest": 1,
+   "symbols": "XRAY"
+  },
+  {
+   "cik": "0000820027",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AMP"
+  },
+  {
+   "cik": "0000820313",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "APH"
+  },
+  {
+   "cik": "0000820318",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 143,
+   "never_latest": 16,
+   "symbols": "COHR"
+  },
+  {
+   "cik": "0000821189",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "EOG"
+  },
+  {
+   "cik": "0000822416",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PHM"
+  },
+  {
+   "cik": "0000823768",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "WM"
+  },
+  {
+   "cik": "0000827052",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "EIX"
+  },
+  {
+   "cik": "0000827054",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MCHP"
+  },
+  {
+   "cik": "0000829224",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SBUX"
+  },
+  {
+   "cik": "0000831001",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "C"
+  },
+  {
+   "cik": "0000831259",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FCX"
+  },
+  {
+   "cik": "0000832101",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "IEX"
+  },
+  {
+   "cik": "0000833444",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "JCI"
+  },
+  {
+   "cik": "0000842023",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TECH"
+  },
+  {
+   "cik": "0000849395",
+   "filings": 11,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 204,
+   "never_latest": 7,
+   "symbols": "CRH"
+  },
+  {
+   "cik": "0000849399",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GEN"
+  },
+  {
+   "cik": "0000851968",
+   "filings": 16,
+   "group": "leaver",
+   "last_membership_day": "2025-12-21",
+   "membership_days": 996,
+   "never_latest": 0,
+   "symbols": "MHK"
+  },
+  {
+   "cik": "0000857005",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PTC"
+  },
+  {
+   "cik": "0000858470",
+   "filings": 18,
+   "group": "leaver",
+   "last_membership_day": "2026-05-06",
+   "membership_days": 1089,
+   "never_latest": 1,
+   "symbols": "CTRA"
+  },
+  {
+   "cik": "0000858877",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CSCO"
+  },
+  {
+   "cik": "0000859737",
+   "filings": 17,
+   "group": "leaver",
+   "last_membership_day": "2026-04-08",
+   "membership_days": 1069,
+   "never_latest": 0,
+   "symbols": "HOLX"
+  },
+  {
+   "cik": "0000860730",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HCA"
+  },
+  {
+   "cik": "0000860731",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TYL"
+  },
+  {
+   "cik": "0000864749",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 2,
+   "symbols": "TRMB"
+  },
+  {
+   "cik": "0000865752",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MNST"
+  },
+  {
+   "cik": "0000866374",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 81,
+   "never_latest": 17,
+   "symbols": "FLEX"
+  },
+  {
+   "cik": "0000866787",
+   "filings": 18,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AZO"
+  },
+  {
+   "cik": "0000872589",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "REGN"
+  },
+  {
+   "cik": "0000874716",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "IDXX"
+  },
+  {
+   "cik": "0000874761",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AES"
+  },
+  {
+   "cik": "0000874766",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HIG"
+  },
+  {
+   "cik": "0000875045",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BIIB"
+  },
+  {
+   "cik": "0000875320",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "VRTX"
+  },
+  {
+   "cik": "0000877212",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ZBRA"
+  },
+  {
+   "cik": "0000877890",
+   "filings": 3,
+   "group": "leaver",
+   "last_membership_day": "2022-10-02",
+   "membership_days": 188,
+   "never_latest": 0,
+   "symbols": "CTXS"
+  },
+  {
+   "cik": "0000878927",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ODFL"
+  },
+  {
+   "cik": "0000879101",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "KIM"
+  },
+  {
+   "cik": "0000879169",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "INCY"
+  },
+  {
+   "cik": "0000882095",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GILD"
+  },
+  {
+   "cik": "0000882184",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DHI"
+  },
+  {
+   "cik": "0000882835",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ROP"
+  },
+  {
+   "cik": "0000883241",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SNPS"
+  },
+  {
+   "cik": "0000884887",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "RCL"
+  },
+  {
+   "cik": "0000885725",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BSX"
+  },
+  {
+   "cik": "0000886982",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GS"
+  },
+  {
+   "cik": "0000891103",
+   "filings": 17,
+   "group": "leaver",
+   "last_membership_day": "2026-03-22",
+   "membership_days": 1057,
+   "never_latest": 0,
+   "symbols": "MTCH"
+  },
+  {
+   "cik": "0000895126",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 393,
+   "never_latest": 12,
+   "symbols": "EXE"
+  },
+  {
+   "cik": "0000895421",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MS"
+  },
+  {
+   "cik": "0000896159",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CB"
+  },
+  {
+   "cik": "0000896878",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "INTU"
+  },
+  {
+   "cik": "0000898173",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ORLY"
+  },
+  {
+   "cik": "0000898293",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 708,
+   "never_latest": 7,
+   "symbols": "JBL"
+  },
+  {
+   "cik": "0000899051",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ALL"
+  },
+  {
+   "cik": "0000899689",
+   "filings": 4,
+   "group": "leaver",
+   "last_membership_day": "2023-01-04",
+   "membership_days": 253,
+   "never_latest": 0,
+   "symbols": "VNO"
+  },
+  {
+   "cik": "0000900075",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CPRT"
+  },
+  {
+   "cik": "0000906107",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "VMRK"
+  },
+  {
+   "cik": "0000906163",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NVR"
+  },
+  {
+   "cik": "0000906345",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1137,
+   "never_latest": 0,
+   "symbols": "CPT"
+  },
+  {
+   "cik": "0000908255",
+   "filings": 13,
+   "group": "leaver",
+   "last_membership_day": "2025-03-23",
+   "membership_days": 807,
+   "never_latest": 0,
+   "symbols": "BWA"
+  },
+  {
+   "cik": "0000909832",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "COST"
+  },
+  {
+   "cik": "0000910521",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 647,
+   "never_latest": 8,
+   "symbols": "DECK"
+  },
+  {
+   "cik": "0000910606",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "REG"
+  },
+  {
+   "cik": "0000912595",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MAA"
+  },
+  {
+   "cik": "0000914208",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "IVZ"
+  },
+  {
+   "cik": "0000915389",
+   "filings": 15,
+   "group": "leaver",
+   "last_membership_day": "2025-11-03",
+   "membership_days": 963,
+   "never_latest": 0,
+   "symbols": "EMN"
+  },
+  {
+   "cik": "0000915912",
+   "filings": 19,
+   "group": "leaver",
+   "last_membership_day": "2026-08-17",
+   "membership_days": 1159,
+   "never_latest": 0,
+   "symbols": "AVB"
+  },
+  {
+   "cik": "0000915913",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ALB"
+  },
+  {
+   "cik": "0000916076",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MLM"
+  },
+  {
+   "cik": "0000916365",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TSCO"
+  },
+  {
+   "cik": "0000920148",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "LH"
+  },
+  {
+   "cik": "0000920522",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ESS"
+  },
+  {
+   "cik": "0000920760",
+   "filings": 20,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "LEN"
+  },
+  {
+   "cik": "0000921738",
+   "filings": 3,
+   "group": "leaver",
+   "last_membership_day": "2022-09-18",
+   "membership_days": 178,
+   "never_latest": 0,
+   "symbols": "PENN"
+  },
+  {
+   "cik": "0000922224",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PPL"
+  },
+  {
+   "cik": "0000922621",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 517,
+   "never_latest": 10,
+   "symbols": "ERIE"
+  },
+  {
+   "cik": "0000927066",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DVA"
+  },
+  {
+   "cik": "0000927628",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "COF"
+  },
+  {
+   "cik": "0000927653",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MCK"
+  },
+  {
+   "cik": "0000935703",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DLTR"
+  },
+  {
+   "cik": "0000936340",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DTE"
+  },
+  {
+   "cik": "0000936395",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 172,
+   "never_latest": 15,
+   "symbols": "CIEN"
+  },
+  {
+   "cik": "0000936468",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "LMT"
+  },
+  {
+   "cik": "0000940944",
+   "filings": 20,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DRI"
+  },
+  {
+   "cik": "0000943452",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "WAB"
+  },
+  {
+   "cik": "0000943819",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "RMD"
+  },
+  {
+   "cik": "0000945841",
+   "filings": 18,
+   "group": "leaver",
+   "last_membership_day": "2026-06-21",
+   "membership_days": 1119,
+   "never_latest": 0,
+   "symbols": "POOL"
+  },
+  {
+   "cik": "0000946581",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TTWO"
+  },
+  {
+   "cik": "0000947484",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 991,
+   "never_latest": 2,
+   "symbols": "ACGL"
+  },
+  {
+   "cik": "0001000228",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HSIC"
+  },
+  {
+   "cik": "0001000697",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "WAT"
+  },
+  {
+   "cik": "0001001082",
+   "filings": 6,
+   "group": "leaver",
+   "last_membership_day": "2023-06-19",
+   "membership_days": 366,
+   "never_latest": 0,
+   "symbols": "DISH"
+  },
+  {
+   "cik": "0001001250",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "EL"
+  },
+  {
+   "cik": "0001002047",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NTAP"
+  },
+  {
+   "cik": "0001002910",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AEE"
+  },
+  {
+   "cik": "0001004980",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1012,
+   "never_latest": 2,
+   "symbols": "PCG"
+  },
+  {
+   "cik": "0001012100",
+   "filings": 8,
+   "group": "leaver",
+   "last_membership_day": "2023-12-17",
+   "membership_days": 492,
+   "never_latest": 0,
+   "symbols": "SEE"
+  },
+  {
+   "cik": "0001013237",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FDS"
+  },
+  {
+   "cik": "0001013462",
+   "filings": 14,
+   "group": "leaver",
+   "last_membership_day": "2025-07-17",
+   "membership_days": 887,
+   "never_latest": 0,
+   "symbols": "ANSS"
+  },
+  {
+   "cik": "0001013871",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NRG"
+  },
+  {
+   "cik": "0001014473",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "VRSN"
+  },
+  {
+   "cik": "0001018724",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AMZN"
+  },
+  {
+   "cik": "0001020569",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "IRM"
+  },
+  {
+   "cik": "0001022079",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DGX"
+  },
+  {
+   "cik": "0001022671",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 955,
+   "never_latest": 3,
+   "symbols": "STLD"
+  },
+  {
+   "cik": "0001024478",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ROK"
+  },
+  {
+   "cik": "0001031296",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FE"
+  },
+  {
+   "cik": "0001032208",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SRE"
+  },
+  {
+   "cik": "0001034054",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SBAC"
+  },
+  {
+   "cik": "0001035002",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "VLO"
+  },
+  {
+   "cik": "0001035267",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ISRG"
+  },
+  {
+   "cik": "0001035443",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ARE"
+  },
+  {
+   "cik": "0001035983",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 204,
+   "never_latest": 15,
+   "symbols": "FIX"
+  },
+  {
+   "cik": "0001037038",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "RL"
+  },
+  {
+   "cik": "0001037540",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BXP"
+  },
+  {
+   "cik": "0001037646",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MTD"
+  },
+  {
+   "cik": "0001037868",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AME"
+  },
+  {
+   "cik": "0001038357",
+   "filings": 10,
+   "group": "leaver",
+   "last_membership_day": "2024-05-07",
+   "membership_days": 589,
+   "never_latest": 0,
+   "symbols": "PXD"
+  },
+  {
+   "cik": "0001039684",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "OKE"
+  },
+  {
+   "cik": "0001041061",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "YUM"
+  },
+  {
+   "cik": "0001043277",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CHRW"
+  },
+  {
+   "cik": "0001043604",
+   "filings": 14,
+   "group": "leaver",
+   "last_membership_day": "2025-07-08",
+   "membership_days": 880,
+   "never_latest": 0,
+   "symbols": "JNPR"
+  },
+  {
+   "cik": "0001045609",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PLD"
+  },
+  {
+   "cik": "0001045810",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NVDA"
+  },
+  {
+   "cik": "0001047862",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ED"
+  },
+  {
+   "cik": "0001048286",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MAR"
+  },
+  {
+   "cik": "0001048695",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FFIV"
+  },
+  {
+   "cik": "0001048911",
+   "filings": 18,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FDX"
+  },
+  {
+   "cik": "0001050915",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PWR"
+  },
+  {
+   "cik": "0001051470",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CCI"
+  },
+  {
+   "cik": "0001053507",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AMT"
+  },
+  {
+   "cik": "0001057352",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1022,
+   "never_latest": 2,
+   "symbols": "CSGP"
+  },
+  {
+   "cik": "0001058090",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CMG"
+  },
+  {
+   "cik": "0001058290",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CTSH"
+  },
+  {
+   "cik": "0001059556",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MCO"
+  },
+  {
+   "cik": "0001060391",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "RSG"
+  },
+  {
+   "cik": "0001063761",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SPG"
+  },
+  {
+   "cik": "0001065088",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "EBAY"
+  },
+  {
+   "cik": "0001065280",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NFLX"
+  },
+  {
+   "cik": "0001065696",
+   "filings": 16,
+   "group": "leaver",
+   "last_membership_day": "2025-12-21",
+   "membership_days": 996,
+   "never_latest": 0,
+   "symbols": "LKQ"
+  },
+  {
+   "cik": "0001067701",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "URI"
+  },
+  {
+   "cik": "0001067983",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BRK.B"
+  },
+  {
+   "cik": "0001069183",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 865,
+   "never_latest": 4,
+   "symbols": "AXON"
+  },
+  {
+   "cik": "0001069202",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 453,
+   "never_latest": 11,
+   "symbols": "LII"
+  },
+  {
+   "cik": "0001070750",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HST"
+  },
+  {
+   "cik": "0001071739",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CNC"
+  },
+  {
+   "cik": "0001075531",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BKNG"
+  },
+  {
+   "cik": "0001086222",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AKAM"
+  },
+  {
+   "cik": "0001090012",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DVN"
+  },
+  {
+   "cik": "0001090727",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "UPS"
+  },
+  {
+   "cik": "0001090872",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "A"
+  },
+  {
+   "cik": "0001091667",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CHTR"
+  },
+  {
+   "cik": "0001093557",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DXCM"
+  },
+  {
+   "cik": "0001094285",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TDY"
+  },
+  {
+   "cik": "0001095073",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "EG/RE"
+  },
+  {
+   "cik": "0001097149",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ALGN"
+  },
+  {
+   "cik": "0001097864",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1084,
+   "never_latest": 1,
+   "symbols": "ON"
+  },
+  {
+   "cik": "0001099219",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MET"
+  },
+  {
+   "cik": "0001099800",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "EW"
+  },
+  {
+   "cik": "0001100682",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CRL"
+  },
+  {
+   "cik": "0001101239",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "EQIX"
+  },
+  {
+   "cik": "0001103982",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MDLZ"
+  },
+  {
+   "cik": "0001108524",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CRM"
+  },
+  {
+   "cik": "0001109357",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "EXC"
+  },
+  {
+   "cik": "0001110803",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 638,
+   "never_latest": 8,
+   "symbols": "ILMN"
+  },
+  {
+   "cik": "0001111711",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NI"
+  },
+  {
+   "cik": "0001111928",
+   "filings": 2,
+   "group": "leaver",
+   "last_membership_day": "2022-06-20",
+   "membership_days": 116,
+   "never_latest": 0,
+   "symbols": "IPGP"
+  },
+  {
+   "cik": "0001113169",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TROW"
+  },
+  {
+   "cik": "0001116132",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TPR"
+  },
+  {
+   "cik": "0001120193",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NDAQ"
+  },
+  {
+   "cik": "0001121788",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GRMN"
+  },
+  {
+   "cik": "0001123360",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GPN"
+  },
+  {
+   "cik": "0001126328",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PFG"
+  },
+  {
+   "cik": "0001130310",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CNP"
+  },
+  {
+   "cik": "0001132979",
+   "filings": 0,
+   "group": "leaver",
+   "last_membership_day": "2023-05-03",
+   "membership_days": 335,
+   "never_latest": 0,
+   "symbols": "FRC"
+  },
+  {
+   "cik": "0001133421",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NOC"
+  },
+  {
+   "cik": "0001136869",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ZBH"
+  },
+  {
+   "cik": "0001136893",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FIS"
+  },
+  {
+   "cik": "0001137774",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PRU"
+  },
+  {
+   "cik": "0001137789",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "STX"
+  },
+  {
+   "cik": "0001138118",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CBRE"
+  },
+  {
+   "cik": "0001140536",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "WLTW/WTW"
+  },
+  {
+   "cik": "0001140859",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "COR"
+  },
+  {
+   "cik": "0001141391",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MA"
+  },
+  {
+   "cik": "0001145197",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 900,
+   "never_latest": 4,
+   "symbols": "PODD"
+  },
+  {
+   "cik": "0001156039",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ELV"
+  },
+  {
+   "cik": "0001156375",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CME"
+  },
+  {
+   "cik": "0001158449",
+   "filings": 7,
+   "group": "leaver",
+   "last_membership_day": "2023-08-24",
+   "membership_days": 413,
+   "never_latest": 0,
+   "symbols": "AAP"
+  },
+  {
+   "cik": "0001163165",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "COP"
+  },
+  {
+   "cik": "0001164727",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NEM"
+  },
+  {
+   "cik": "0001166691",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CMCSA"
+  },
+  {
+   "cik": "0001170010",
+   "filings": 16,
+   "group": "leaver",
+   "last_membership_day": "2025-10-30",
+   "membership_days": 961,
+   "never_latest": 0,
+   "symbols": "KMX"
+  },
+  {
+   "cik": "0001174922",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "WYNN"
+  },
+  {
+   "cik": "0001175454",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CPAY/FLT"
+  },
+  {
+   "cik": "0001176948",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 211,
+   "never_latest": 15,
+   "symbols": "ARES"
+  },
+  {
+   "cik": "0001179929",
+   "filings": 17,
+   "group": "leaver",
+   "last_membership_day": "2026-03-22",
+   "membership_days": 1017,
+   "never_latest": 0,
+   "symbols": "MOH"
+  },
+  {
+   "cik": "0001260221",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TDG"
+  },
+  {
+   "cik": "0001262039",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FTNT"
+  },
+  {
+   "cik": "0001267238",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AIZ"
+  },
+  {
+   "cik": "0001274494",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 958,
+   "never_latest": 3,
+   "symbols": "FSLR"
+  },
+  {
+   "cik": "0001278021",
+   "filings": 15,
+   "group": "leaver",
+   "last_membership_day": "2025-09-21",
+   "membership_days": 932,
+   "never_latest": 0,
+   "symbols": "MKTX"
+  },
+  {
+   "cik": "0001280452",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MPWR"
+  },
+  {
+   "cik": "0001281761",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "RF"
+  },
+  {
+   "cik": "0001283699",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TMUS"
+  },
+  {
+   "cik": "0001285785",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MOS"
+  },
+  {
+   "cik": "0001286681",
+   "filings": 20,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DPZ"
+  },
+  {
+   "cik": "0001288784",
+   "filings": 0,
+   "group": "leaver",
+   "last_membership_day": "2023-03-14",
+   "membership_days": 300,
+   "never_latest": 0,
+   "symbols": "SBNY"
+  },
+  {
+   "cik": "0001289490",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "EXR"
+  },
+  {
+   "cik": "0001297996",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DLR"
+  },
+  {
+   "cik": "0001300514",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "LVS"
+  },
+  {
+   "cik": "0001306830",
+   "filings": 13,
+   "group": "leaver",
+   "last_membership_day": "2025-03-23",
+   "membership_days": 807,
+   "never_latest": 0,
+   "symbols": "CE"
+  },
+  {
+   "cik": "0001316835",
+   "filings": 19,
+   "group": "leaver",
+   "last_membership_day": "2026-09-20",
+   "membership_days": 690,
+   "never_latest": 7,
+   "symbols": "BLDR"
+  },
+  {
+   "cik": "0001318605",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TSLA"
+  },
+  {
+   "cik": "0001321655",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 517,
+   "never_latest": 10,
+   "symbols": "PLTR"
+  },
+  {
+   "cik": "0001324404",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CF"
+  },
+  {
+   "cik": "0001324424",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "EXPE"
+  },
+  {
+   "cik": "0001326160",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DUK"
+  },
+  {
+   "cik": "0001326801",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FB/META"
+  },
+  {
+   "cik": "0001327567",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 834,
+   "never_latest": 5,
+   "symbols": "PANW"
+  },
+  {
+   "cik": "0001327811",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 453,
+   "never_latest": 11,
+   "symbols": "WDAY"
+  },
+  {
+   "cik": "0001335258",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "LYV"
+  },
+  {
+   "cik": "0001336917",
+   "filings": 1,
+   "group": "leaver",
+   "last_membership_day": "2022-06-20",
+   "membership_days": 116,
+   "never_latest": 0,
+   "symbols": "UA/UAA"
+  },
+  {
+   "cik": "0001336920",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "LDOS"
+  },
+  {
+   "cik": "0001341439",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ORCL"
+  },
+  {
+   "cik": "0001352010",
+   "filings": 18,
+   "group": "leaver",
+   "last_membership_day": "2026-06-01",
+   "membership_days": 1106,
+   "never_latest": 0,
+   "symbols": "EPAM"
+  },
+  {
+   "cik": "0001370637",
+   "filings": 11,
+   "group": "leaver",
+   "last_membership_day": "2024-09-22",
+   "membership_days": 683,
+   "never_latest": 0,
+   "symbols": "ETSY"
+  },
+  {
+   "cik": "0001373715",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NOW"
+  },
+  {
+   "cik": "0001374310",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CBOE"
+  },
+  {
+   "cik": "0001375365",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 647,
+   "never_latest": 10,
+   "symbols": "SMCI"
+  },
+  {
+   "cik": "0001378946",
+   "filings": 1,
+   "group": "leaver",
+   "last_membership_day": "2022-04-03",
+   "membership_days": 63,
+   "never_latest": 0,
+   "symbols": "PBCT"
+  },
+  {
+   "cik": "0001381197",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 284,
+   "never_latest": 14,
+   "symbols": "IBKR"
+  },
+  {
+   "cik": "0001383312",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BR"
+  },
+  {
+   "cik": "0001385157",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TEL"
+  },
+  {
+   "cik": "0001389170",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1005,
+   "never_latest": 2,
+   "symbols": "TRGP"
+  },
+  {
+   "cik": "0001390777",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BNY"
+  },
+  {
+   "cik": "0001393052",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 111,
+   "never_latest": 16,
+   "symbols": "VEEV"
+  },
+  {
+   "cik": "0001393311",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PSA"
+  },
+  {
+   "cik": "0001393612",
+   "filings": 14,
+   "group": "leaver",
+   "last_membership_day": "2025-05-18",
+   "membership_days": 846,
+   "never_latest": 0,
+   "symbols": "DFS"
+  },
+  {
+   "cik": "0001393818",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 772,
+   "never_latest": 6,
+   "symbols": "BX"
+  },
+  {
+   "cik": "0001396009",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "VMC"
+  },
+  {
+   "cik": "0001397187",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 750,
+   "never_latest": 6,
+   "symbols": "LULU"
+  },
+  {
+   "cik": "0001402057",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CDW"
+  },
+  {
+   "cik": "0001403161",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "V"
+  },
+  {
+   "cik": "0001403568",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ULTA"
+  },
+  {
+   "cik": "0001404912",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 580,
+   "never_latest": 9,
+   "symbols": "KKR"
+  },
+  {
+   "cik": "0001408198",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MSCI"
+  },
+  {
+   "cik": "0001410636",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AWK"
+  },
+  {
+   "cik": "0001413329",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PM"
+  },
+  {
+   "cik": "0001413447",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NXPI"
+  },
+  {
+   "cik": "0001415404",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 143,
+   "never_latest": 16,
+   "symbols": "ECHO/SATS"
+  },
+  {
+   "cik": "0001418091",
+   "filings": 3,
+   "group": "leaver",
+   "last_membership_day": "2022-10-31",
+   "membership_days": 209,
+   "never_latest": 0,
+   "symbols": "TWTR"
+  },
+  {
+   "cik": "0001418135",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1084,
+   "never_latest": 1,
+   "symbols": "KDP"
+  },
+  {
+   "cik": "0001419612",
+   "filings": 8,
+   "group": "leaver",
+   "last_membership_day": "2023-12-17",
+   "membership_days": 492,
+   "never_latest": 0,
+   "symbols": "SEDG"
+  },
+  {
+   "cik": "0001437107",
+   "filings": 19,
+   "group": "leaver",
+   "last_membership_day": "2026-10-05",
+   "membership_days": 1193,
+   "never_latest": 0,
+   "symbols": "DISCA/DISCK/WBD"
+  },
+  {
+   "cik": "0001442145",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "VRSK"
+  },
+  {
+   "cik": "0001447669",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 7,
+   "never_latest": 18,
+   "symbols": "TWLO"
+  },
+  {
+   "cik": "0001463101",
+   "filings": 15,
+   "group": "leaver",
+   "last_membership_day": "2025-09-21",
+   "membership_days": 932,
+   "never_latest": 0,
+   "symbols": "ENPH"
+  },
+  {
+   "cik": "0001466258",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "TT"
+  },
+  {
+   "cik": "0001467373",
+   "filings": 18,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ACN"
+  },
+  {
+   "cik": "0001467858",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GM"
+  },
+  {
+   "cik": "0001474432",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 18,
+   "never_latest": 18,
+   "symbols": "P"
+  },
+  {
+   "cik": "0001474735",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GNRC"
+  },
+  {
+   "cik": "0001478242",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "IQV"
+  },
+  {
+   "cik": "0001489393",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "LYB"
+  },
+  {
+   "cik": "0001492633",
+   "filings": 3,
+   "group": "leaver",
+   "last_membership_day": "2022-10-11",
+   "membership_days": 195,
+   "never_latest": 0,
+   "symbols": "NLSN"
+  },
+  {
+   "cik": "0001501585",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HII"
+  },
+  {
+   "cik": "0001506307",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "KMI"
+  },
+  {
+   "cik": "0001510295",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MPC"
+  },
+  {
+   "cik": "0001512673",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 310,
+   "never_latest": 13,
+   "symbols": "XYZ"
+  },
+  {
+   "cik": "0001513761",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NCLH"
+  },
+  {
+   "cik": "0001519751",
+   "filings": 4,
+   "group": "leaver",
+   "last_membership_day": "2022-12-18",
+   "membership_days": 242,
+   "never_latest": 0,
+   "symbols": "FBHS"
+  },
+  {
+   "cik": "0001521332",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "APTV"
+  },
+  {
+   "cik": "0001524472",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "XYL"
+  },
+  {
+   "cik": "0001534701",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PSX"
+  },
+  {
+   "cik": "0001535527",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 580,
+   "never_latest": 9,
+   "symbols": "CRWD"
+  },
+  {
+   "cik": "0001539838",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FANG"
+  },
+  {
+   "cik": "0001543151",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 708,
+   "never_latest": 7,
+   "symbols": "UBER"
+  },
+  {
+   "cik": "0001551152",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ABBV"
+  },
+  {
+   "cik": "0001551182",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ETN"
+  },
+  {
+   "cik": "0001555280",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ZTS"
+  },
+  {
+   "cik": "0001559720",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 772,
+   "never_latest": 6,
+   "symbols": "ABNB"
+  },
+  {
+   "cik": "0001561550",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 320,
+   "never_latest": 13,
+   "symbols": "DDOG"
+  },
+  {
+   "cik": "0001564708",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "NWS/NWSA"
+  },
+  {
+   "cik": "0001571949",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ICE"
+  },
+  {
+   "cik": "0001571996",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 517,
+   "never_latest": 10,
+   "symbols": "DELL"
+  },
+  {
+   "cik": "0001579241",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ALLE"
+  },
+  {
+   "cik": "0001585689",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HLT"
+  },
+  {
+   "cik": "0001590895",
+   "filings": 15,
+   "group": "leaver",
+   "last_membership_day": "2025-09-21",
+   "membership_days": 932,
+   "never_latest": 0,
+   "symbols": "CZR"
+  },
+  {
+   "cik": "0001590955",
+   "filings": 17,
+   "group": "leaver",
+   "last_membership_day": "2026-03-22",
+   "membership_days": 1057,
+   "never_latest": 0,
+   "symbols": "PAYC"
+  },
+  {
+   "cik": "0001596532",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "ANET"
+  },
+  {
+   "cik": "0001596783",
+   "filings": 12,
+   "group": "leaver",
+   "last_membership_day": "2024-12-22",
+   "membership_days": 747,
+   "never_latest": 1,
+   "symbols": "CTLT"
+  },
+  {
+   "cik": "0001598014",
+   "filings": 1,
+   "group": "leaver",
+   "last_membership_day": "2022-03-01",
+   "membership_days": 40,
+   "never_latest": 0,
+   "symbols": "INFO"
+  },
+  {
+   "cik": "0001601046",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "KEYS"
+  },
+  {
+   "cik": "0001601712",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SYF"
+  },
+  {
+   "cik": "0001604778",
+   "filings": 12,
+   "group": "leaver",
+   "last_membership_day": "2024-12-22",
+   "membership_days": 747,
+   "never_latest": 0,
+   "symbols": "QRVO"
+  },
+  {
+   "cik": "0001609711",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 580,
+   "never_latest": 9,
+   "symbols": "GDDY"
+  },
+  {
+   "cik": "0001613103",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MDT"
+  },
+  {
+   "cik": "0001618921",
+   "filings": 15,
+   "group": "leaver",
+   "last_membership_day": "2025-08-27",
+   "membership_days": 916,
+   "never_latest": 0,
+   "symbols": "WBA"
+  },
+  {
+   "cik": "0001633917",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "PYPL"
+  },
+  {
+   "cik": "0001633978",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 143,
+   "never_latest": 16,
+   "symbols": "LITE"
+  },
+  {
+   "cik": "0001637459",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "KHC"
+  },
+  {
+   "cik": "0001645590",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "HPE"
+  },
+  {
+   "cik": "0001652044",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "GOOG/GOOGL"
+  },
+  {
+   "cik": "0001659166",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FTV"
+  },
+  {
+   "cik": "0001664703",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 18,
+   "never_latest": 18,
+   "symbols": "BE"
+  },
+  {
+   "cik": "0001666700",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DD"
+  },
+  {
+   "cik": "0001671933",
+   "filings": 19,
+   "group": "leaver",
+   "last_membership_day": "2026-09-20",
+   "membership_days": 295,
+   "never_latest": 13,
+   "symbols": "TTD"
+  },
+  {
+   "cik": "0001674101",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 143,
+   "never_latest": 16,
+   "symbols": "VRT"
+  },
+  {
+   "cik": "0001679273",
+   "filings": 17,
+   "group": "leaver",
+   "last_membership_day": "2026-03-22",
+   "membership_days": 1057,
+   "never_latest": 0,
+   "symbols": "LW"
+  },
+  {
+   "cik": "0001679788",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 354,
+   "never_latest": 13,
+   "symbols": "COIN"
+  },
+  {
+   "cik": "0001682852",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "MRNA"
+  },
+  {
+   "cik": "0001687229",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1022,
+   "never_latest": 2,
+   "symbols": "INVH"
+  },
+  {
+   "cik": "0001688568",
+   "filings": 7,
+   "group": "leaver",
+   "last_membership_day": "2023-10-02",
+   "membership_days": 439,
+   "never_latest": 0,
+   "symbols": "DXC"
+  },
+  {
+   "cik": "0001690820",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 204,
+   "never_latest": 15,
+   "symbols": "CVNA"
+  },
+  {
+   "cik": "0001692819",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 611,
+   "never_latest": 8,
+   "symbols": "VST"
+  },
+  {
+   "cik": "0001699150",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "IR"
+  },
+  {
+   "cik": "0001701605",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BKR"
+  },
+  {
+   "cik": "0001705696",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1092,
+   "never_latest": 1,
+   "symbols": "VICI"
+  },
+  {
+   "cik": "0001707925",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "LIN"
+  },
+  {
+   "cik": "0001711269",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "EVRG"
+  },
+  {
+   "cik": "0001713445",
+   "filings": 10,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 41,
+   "never_latest": 9,
+   "symbols": "RDDT"
+  },
+  {
+   "cik": "0001725057",
+   "filings": 16,
+   "group": "leaver",
+   "last_membership_day": "2026-02-08",
+   "membership_days": 1028,
+   "never_latest": 0,
+   "symbols": "CDAY/DAY"
+  },
+  {
+   "cik": "0001730168",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AVGO"
+  },
+  {
+   "cik": "0001732845",
+   "filings": 10,
+   "group": "leaver",
+   "last_membership_day": "2024-07-07",
+   "membership_days": 629,
+   "never_latest": 0,
+   "symbols": "WRK"
+  },
+  {
+   "cik": "0001739940",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CI"
+  },
+  {
+   "cik": "0001744489",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DIS"
+  },
+  {
+   "cik": "0001748790",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "AMCR"
+  },
+  {
+   "cik": "0001751008",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 268,
+   "never_latest": 14,
+   "symbols": "APP"
+  },
+  {
+   "cik": "0001751788",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "DOW"
+  },
+  {
+   "cik": "0001754301",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "FOX/FOXA"
+  },
+  {
+   "cik": "0001755672",
+   "filings": 19,
+   "group": "leaver",
+   "last_membership_day": "2026-10-05",
+   "membership_days": 1193,
+   "never_latest": 0,
+   "symbols": "CTVA"
+  },
+  {
+   "cik": "0001757898",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "STE"
+  },
+  {
+   "cik": "0001781335",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "OTIS"
+  },
+  {
+   "cik": "0001783180",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "CARR"
+  },
+  {
+   "cik": "0001783879",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 268,
+   "never_latest": 14,
+   "symbols": "HOOD"
+  },
+  {
+   "cik": "0001792044",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "VTRS"
+  },
+  {
+   "cik": "0001792789",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 393,
+   "never_latest": 12,
+   "symbols": "DASH"
+  },
+  {
+   "cik": "0001811074",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 471,
+   "never_latest": 11,
+   "symbols": "TPL"
+  },
+  {
+   "cik": "0001821825",
+   "filings": 7,
+   "group": "leaver",
+   "last_membership_day": "2023-10-17",
+   "membership_days": 450,
+   "never_latest": 0,
+   "symbols": "OGN"
+  },
+  {
+   "cik": "0001835632",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 81,
+   "never_latest": 17,
+   "symbols": "MRVL"
+  },
+  {
+   "cik": "0001841666",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "APA"
+  },
+  {
+   "cik": "0001858681",
+   "filings": 18,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 453,
+   "never_latest": 10,
+   "symbols": "APO"
+  },
+  {
+   "cik": "0001868275",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1179,
+   "never_latest": 0,
+   "symbols": "CEG"
+  },
+  {
+   "cik": "0001932393",
+   "filings": 15,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 948,
+   "never_latest": 0,
+   "symbols": "GEHC"
+  },
+  {
+   "cik": "0001941365",
+   "filings": 0,
+   "group": "leaver",
+   "last_membership_day": "2022-12-18",
+   "membership_days": 2,
+   "never_latest": 0,
+   "symbols": "MBC"
+  },
+  {
+   "cik": "0001944048",
+   "filings": 14,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 787,
+   "never_latest": 1,
+   "symbols": "KVUE"
+  },
+  {
+   "cik": "0001964738",
+   "filings": 10,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 638,
+   "never_latest": 0,
+   "symbols": "SOLV"
+  },
+  {
+   "cik": "0001965040",
+   "filings": 0,
+   "group": "leaver",
+   "last_membership_day": "2023-07-05",
+   "membership_days": 2,
+   "never_latest": 0,
+   "symbols": "FTRE"
+  },
+  {
+   "cik": "0001967680",
+   "filings": 12,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 762,
+   "never_latest": 0,
+   "symbols": "VLTO"
+  },
+  {
+   "cik": "0001968915",
+   "filings": 0,
+   "group": "leaver",
+   "last_membership_day": "2023-07-05",
+   "membership_days": 1,
+   "never_latest": 0,
+   "symbols": "PHIN"
+  },
+  {
+   "cik": "0001973266",
+   "filings": 12,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 393,
+   "never_latest": 5,
+   "symbols": "TKO"
+  },
+  {
+   "cik": "0001996810",
+   "filings": 10,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 637,
+   "never_latest": 0,
+   "symbols": "GEV"
+  },
+  {
+   "cik": "0001996862",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 900,
+   "never_latest": 4,
+   "symbols": "BG"
+  },
+  {
+   "cik": "0002005951",
+   "filings": 10,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 571,
+   "never_latest": 0,
+   "symbols": "SW"
+  },
+  {
+   "cik": "0002011286",
+   "filings": 1,
+   "group": "leaver",
+   "last_membership_day": "2024-12-22",
+   "membership_days": 59,
+   "never_latest": 0,
+   "symbols": "AMTM"
+  },
+  {
+   "cik": "0002011641",
+   "filings": 8,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 50,
+   "never_latest": 6,
+   "symbols": "FERG"
+  },
+  {
+   "cik": "0002012383",
+   "filings": 19,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "BLK"
+  },
+  {
+   "cik": "0002023554",
+   "filings": 7,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 220,
+   "never_latest": 3,
+   "symbols": "SNDK"
+  },
+  {
+   "cik": "0002041610",
+   "filings": 21,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 0,
+   "symbols": "SKYD"
+  },
+  {
+   "cik": "0002058873",
+   "filings": 4,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 238,
+   "never_latest": 0,
+   "symbols": "Q"
+  },
+  {
+   "cik": "0002064953",
+   "filings": 1,
+   "group": "leaver",
+   "last_membership_day": "2025-12-21",
+   "membership_days": 36,
+   "never_latest": 0,
+   "symbols": "SOLS"
+  },
+  {
+   "cik": "0002082247",
+   "filings": 1,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 95,
+   "never_latest": 0,
+   "symbols": "FDXF"
+  },
+  {
+   "cik": "0002089271",
+   "filings": 1,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 76,
+   "never_latest": 0,
+   "symbols": "HONA"
+  },
+  {
+   "cik": "0002115436",
+   "filings": 20,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 1200,
+   "never_latest": 1,
+   "symbols": "XOM"
+  },
+  {
+   "cik": "0002128626",
+   "filings": 0,
+   "group": "current",
+   "last_membership_day": null,
+   "membership_days": 10,
+   "never_latest": 0,
+   "symbols": "VYLR"
+  }
+ ],
+ "filings_since": "2022-01-01",
+ "groups": {
+  "current": {
+   "companies": 500,
+   "filings": 9351,
+   "never_latest": 623,
+   "trading_days": 978500
+  },
+  "leaver": {
+   "companies": 86,
+   "filings": 865,
+   "never_latest": 23,
+   "trading_days": 122005
+  }
+ },
+ "never_latest_tokens": {
+  "current": {
+   "in": 7164500,
+   "out": 934500
+  },
+  "leaver": {
+   "in": 264500,
+   "out": 34500
+  },
+  "total": {
+   "in": 7429000,
+   "out": 969000
+  }
+ },
+ "prices_since": "2019-01-02",
+ "tokens_per_filing": {
+  "in": 11500,
+  "out": 1500
+ },
+ "totals": {
+  "companies": 586,
+  "filings": 10216,
+  "never_latest": 646,
+  "trading_days": 1100505
+ },
+ "universe_db": "/workspaces/thesis/data/universe_history.db",
+ "window_start": "2022-01-03"
+}

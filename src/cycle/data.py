@@ -3,16 +3,32 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from portfolio_common.db import Database, Row, in_clause
 
+from kg_schema.company_profile import CompanyProfile, profile_as_of
 from kg_schema.env import universe_database_path
-from kg_schema.market_cap import market_caps_as_of
-from kg_schema.queries import connect_ro, resolve_asset_ids, symbols_asof
-from kg_schema.versions import DATA_QUALITY_GATE_VERSION, MetricVersions
+from kg_schema.market_cap import MarketCap, market_caps_as_of
+from kg_schema.pillar_score import total_from_block, weights_differ
+from kg_schema.queries import connect_ro, members_asof, resolve_asset_ids
+from kg_schema.trading_calendar import last_session_on_or_before
+from kg_schema.versions import (
+    DATA_QUALITY_GATE_VERSION,
+    RULE_INPUT_GROUP,
+    UTILITY_COVERAGE_AMBIGUOUS_FLAG,
+    UTILITY_COVERAGE_BOUND_AS_WC,
+    UTILITY_COVERAGE_BOUND_IN,
+    UTILITY_COVERAGE_METRIC,
+    UTILITY_COVERAGE_MISSING_BOUND_FLAG,
+    VALUE_INPUTS_METRIC,
+    MetricVersions,
+    resolve_metric_versions,
+)
 
 
 def active_universe(
@@ -29,15 +45,17 @@ def active_universe(
     upath = universe_database_path(str(universe_db_path) if universe_db_path else None)
     uconn = connect_ro(upath)
     try:
-        syms = symbols_asof(uconn, cycle_date, universe=universe)
+        members = members_asof(uconn, cycle_date, universe=universe)
     finally:
         uconn.close()
-    if not syms:
+    if not members:
         raise RuntimeError(f"universe.db ({upath}) has no {universe} members as of {cycle_date}")
-    mapping, _missing = resolve_asset_ids(conn, syms)
+    mapping, _missing = resolve_asset_ids(
+        conn, [(m.symbol, m.cik) for m in members], as_of=cycle_date
+    )
     if not mapping:
         raise RuntimeError(
-            f"none of the {len(syms)} {universe} members as of {cycle_date} exist in assets yet "
+            f"none of the {len(members)} {universe} members as of {cycle_date} exist in assets yet "
             f"-- run fundamental_agent / pricing_agent for this date first"
         )
     ids = sorted(mapping.values())
@@ -61,6 +79,21 @@ def asset_labels(conn: Database, asset_ids: list[int]) -> dict[int, tuple[str, s
         asset_ids,
     )
     return {int(r["id"]): (str(r["ticker"]), r["sector"]) for r in rows}
+
+
+def asset_profiles(
+    conn: Database, asset_ids: list[int], as_of: str
+) -> dict[int, CompanyProfile | None]:
+    """``asset_id -> its APP-00 company profile`` as of *as_of*, or ``None`` when the CIK has no
+    profile (T-071 part 2a). The rules key "financial firm" (APP-00/APP-02) and the regulated-utility
+    overlay (D-13) on this, never on the GICS sector; an unknown CIK is never guessed."""
+    if not asset_ids:
+        return {}
+    rows = conn.execute(
+        f"SELECT id, cik FROM assets WHERE id IN {in_clause(asset_ids)}",  # noqa: S608
+        asset_ids,
+    )
+    return {int(r["id"]): profile_as_of(r["cik"], as_of) for r in rows}
 
 
 def latest_metrics(
@@ -94,6 +127,104 @@ def latest_metrics(
             "value"
         ]
     return out
+
+
+def utility_cash_coverage(conn: Database, cycle_date: str) -> dict[int, dict[str, Any]]:
+    """asset_id -> the D-13 regulated-utility cash-coverage rule input of its newest **10-K**
+    *usable* on *cycle_date* (``available_at <= cycle_date``), read at the newest stored
+    ``rule_input`` engine version -- never a mix of versions.
+
+    A 10-Q does not carry the input (it is a three-year average over a 10-K's own cash-flow
+    statement), so this deliberately keys on ``form LIKE '10-K%'`` rather than reusing
+    :func:`latest_metrics`' "newest filing". The input lives outside
+    ``kg_schema.versions.METRIC_GROUPS``, so its engine version is resolved on its own here; an
+    asset whose newest 10-K has no such row is simply absent (never guessed).
+
+    The stored ``value`` is the primary bound (``average_ambiguous_in``); both bounds and the two
+    flags come from the row's ``inputs_json``, so the rule can require *both* bounds below the
+    cutoff (R2)."""
+    versions = resolve_metric_versions(conn, None, groups=(RULE_INPUT_GROUP,))
+    if not versions.by_group:
+        return {}
+    rows = conn.execute(
+        """
+        WITH known AS (
+            SELECT f.id, ROW_NUMBER() OVER (
+                PARTITION BY f.asset_id ORDER BY f.period_end DESC, f.available_at DESC, f.id DESC
+            ) AS rn
+            FROM sec_filings f
+            WHERE f.form LIKE '10-K%' AND f.period_end IS NOT NULL
+              AND f.available_at IS NOT NULL AND f.available_at <= ?
+        )
+        SELECT f.asset_id, m.value, m.inputs_json
+        FROM fundamental_metrics m
+        JOIN sec_filings f ON f.id = m.filing_id
+        JOIN known k ON k.id = f.id AND k.rn = 1
+        WHERE m.metric_group = ? AND m.metric_name = ?
+          AND (m.metric_group || '/' || m.engine_version) IN (SELECT value FROM json_each(?))
+        """,
+        (cycle_date, RULE_INPUT_GROUP, UTILITY_COVERAGE_METRIC, versions.json_param()),
+    ).fetchall()
+    out: dict[int, dict[str, Any]] = {}
+    for r in rows:
+        inputs = _json_object(r["inputs_json"])
+        out[int(r["asset_id"])] = {
+            "value": r["value"],
+            "ambiguous_in": inputs.get(UTILITY_COVERAGE_BOUND_IN),
+            "ambiguous_as_wc": inputs.get(UTILITY_COVERAGE_BOUND_AS_WC),
+            "missing_bound": bool(inputs.get(UTILITY_COVERAGE_MISSING_BOUND_FLAG)),
+            "ambiguous_working_capital": bool(inputs.get(UTILITY_COVERAGE_AMBIGUOUS_FLAG)),
+        }
+    return out
+
+
+def value_inputs(conn: Database, cycle_date: str) -> dict[int, dict[str, Any]]:
+    """asset_id -> the D1 VALORIZATION value inputs of its newest filing *usable* on *cycle_date*
+    (the same filing :func:`latest_metrics` reads), read at the newest stored ``rule_input`` engine
+    version -- never a mix of versions.
+
+    A 10-K and a 10-Q both carry the input (the numerators are on the ratios' basis), so this keys
+    on the same "newest usable filing" as :func:`latest_metrics` -- unlike
+    :func:`utility_cash_coverage`, which is a 10-K's own three-year average. The stored
+    ``inputs_json`` is returned as it is, with the filing's accession; an asset whose newest filing
+    has no such row is simply absent (never guessed)."""
+    versions = resolve_metric_versions(conn, None, groups=(RULE_INPUT_GROUP,))
+    if not versions.by_group:
+        return {}
+    rows = conn.execute(
+        """
+        WITH known AS (
+            SELECT f.id, ROW_NUMBER() OVER (
+                PARTITION BY f.asset_id ORDER BY f.period_end DESC, f.available_at DESC, f.id DESC
+            ) AS rn
+            FROM sec_filings f
+            WHERE f.period_end IS NOT NULL AND f.available_at IS NOT NULL AND f.available_at <= ?
+        )
+        SELECT f.asset_id, f.accession_number, m.inputs_json
+        FROM fundamental_metrics m
+        JOIN sec_filings f ON f.id = m.filing_id
+        JOIN known k ON k.id = f.id AND k.rn = 1
+        WHERE m.metric_group = ? AND m.metric_name = ?
+          AND (m.metric_group || '/' || m.engine_version) IN (SELECT value FROM json_each(?))
+        """,
+        (cycle_date, RULE_INPUT_GROUP, VALUE_INPUTS_METRIC, versions.json_param()),
+    ).fetchall()
+    return {
+        int(r["asset_id"]): {
+            "inputs": _json_object(r["inputs_json"]),
+            "accession": r["accession_number"],
+        }
+        for r in rows
+    }
+
+
+def market_cap_details(
+    conn: Database, cycle_date: str, asset_ids: list[int]
+) -> dict[int, MarketCap]:
+    """Each asset's :class:`~kg_schema.market_cap.MarketCap` on *cycle_date* -- the audit trail
+    behind :func:`market_cap_estimates` (the share date, the close date, the class count), for
+    VALORIZATION v2's components. An asset the reader refuses to value is simply absent."""
+    return market_caps_as_of(conn, asset_ids, as_of=cycle_date).caps
 
 
 def latest_trailing_net_income(
@@ -143,8 +274,11 @@ class DataQuality:
     quarantined: dict[int, set[str]] = field(default_factory=dict)
     # asset_id -> the HARD issues (the DATA_QUALITY veto's evidence)
     hard: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
-    # assets whose latest filing reports book equity <= 0 (DQ_NEG_EQUITY)
-    negative_equity: set[int] = field(default_factory=set)
+    # asset_id -> the DQ_NEG_EQUITY record's evidence for a latest filing with book equity <= 0
+    # (equity, net debt/EBITDA, interest coverage, TTM EBITDA, net debt). D-04 (T-071 part 2a): the
+    # gate is always SOFT now, and this record is the equity sign the LEVERAGE_EXTREME screen keys
+    # on (the filing's D/E is quarantined, so the rule never sees a negative ratio).
+    negative_equity: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def apply(
         self, metrics: dict[int, dict[str, float | None]]
@@ -157,10 +291,19 @@ class DataQuality:
         return out
 
 
-def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> DataQuality:
+def data_quality(
+    conn: Database,
+    cycle_date: str,
+    versions: MetricVersions,
+    gate_version: str = DATA_QUALITY_GATE_VERSION,
+) -> DataQuality:
     """The quarantines and HARD issues recorded against each asset's latest *usable* filing
     (the same filing :func:`latest_metrics` reads, T-106/T-107), for the metric *versions* the run resolved and the
-    current gate version only. A SOFT, unquarantined issue is a review item and is skipped."""
+    current gate version only. A SOFT, unquarantined issue is a review item and is skipped.
+
+    *gate_version* is the gate methodology to read (T-065); it defaults to the current one. A
+    measurement that compares two gate versions on two databases (T-071 part 2a's before/after) passes
+    the earlier one, so both sides go through this one reader."""
     rows = conn.execute(
         """
         WITH known AS (
@@ -171,7 +314,7 @@ def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> D
             WHERE f.period_end IS NOT NULL AND f.available_at IS NOT NULL AND f.available_at <= ?
         )
         SELECT f.asset_id, d.metric_group, d.metric_name, d.rule_id, d.severity,
-               d.quarantined, d.value
+               d.quarantined, d.value, d.evidence_json
         FROM data_quality_issue d
         JOIN sec_filings f ON f.id = d.filing_id
         JOIN known k ON k.id = f.id AND k.rn = 1
@@ -180,7 +323,7 @@ def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> D
           AND (d.quarantined = 1 OR d.severity = 'HARD')
         ORDER BY f.asset_id, d.rule_id, d.metric_group, d.metric_name
         """,
-        (cycle_date, versions.json_param(), DATA_QUALITY_GATE_VERSION),
+        (cycle_date, versions.json_param(), gate_version),
     ).fetchall()
     out = DataQuality()
     for r in rows:
@@ -189,7 +332,7 @@ def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> D
         if r["quarantined"]:
             out.quarantined.setdefault(aid, set()).add(key)
         if r["rule_id"] == "DQ_NEG_EQUITY":
-            out.negative_equity.add(aid)
+            out.negative_equity[aid] = _json_object(r["evidence_json"])
         if r["severity"] == "HARD":
             out.hard.setdefault(aid, []).append(
                 {"rule_id": r["rule_id"], "metric": key, "value": r["value"]}
@@ -233,14 +376,23 @@ def latest_price_observation(
 
 
 def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
-    """Each asset's newest FUNDAMENTAL snapshot usable on *cycle_date*
-    (``id, asset_id, event_time, raw_value, normalized_score``). A FUNDAMENTAL row's
+    """Each asset's newest **scored** FUNDAMENTAL snapshot usable on *cycle_date*
+    (``id, asset_id, event_time, raw_value, normalized_score, inputs_json``). A FUNDAMENTAL row's
     ``event_time`` is its period end -- what the score is *about* -- not when it became known;
-    that is its ``available_at``, the first trading day after its filing's date (T-107)."""
+    that is its ``available_at``, the first trading day after its filing's date (T-107).
+
+    T-073 (D1): the newest *usable* filing decides. A filing whose applicable pillar has no value
+    carries no ``raw_value`` -- it is recorded (so the run resumes) but it is not a score, so the
+    member reads as unscored (T-119) and an older *scored* filing is **not** carried forward in its
+    place: that would read a stale value as the current one, which MET-00 rules out. The ranking
+    therefore comes first and the row is dropped afterwards.
+
+    ``inputs_json`` rides along for D4: it holds the row's pillar block, so a cycle under other
+    weights recomputes the total from the ratings the row stored."""
     return conn.execute(
         """
         WITH known AS (
-            SELECT s.id, s.asset_id, s.event_time, s.raw_value, s.normalized_score,
+            SELECT s.id, s.asset_id, s.event_time, s.raw_value, s.normalized_score, s.inputs_json,
                    ROW_NUMBER() OVER (
                        PARTITION BY s.asset_id ORDER BY s.event_time DESC, s.id DESC
                    ) AS rn
@@ -248,30 +400,60 @@ def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
             WHERE s.score_type = 'FUNDAMENTAL'
               AND s.available_at IS NOT NULL AND s.available_at <= ?
         )
-        SELECT id, asset_id, event_time, raw_value, normalized_score FROM known WHERE rn = 1
+        SELECT id, asset_id, event_time, raw_value, normalized_score, inputs_json
+        FROM known
+        WHERE rn = 1 AND raw_value IS NOT NULL
         ORDER BY asset_id
         """,
         (cycle_date,),
     ).fetchall()
 
 
-def last_fundamental_dates(conn: Database, cycle_date: str) -> dict[int, str | None]:
-    """asset_id -> the period end of its newest FUNDAMENTAL score usable on *cycle_date*.
+def fundamental_value_under(row: Row, weights: Mapping[str, float]) -> float:
+    """A FUNDAMENTAL row's total under *weights* (T-073, D4).
 
-    Only ever has an asset as a key when it *has* a usable FUNDAMENTAL score -- an asset with
-    none at all is simply absent, never present with a ``None`` value (T-119): a consumer that
-    wants "no score at all" must diff its own universe against this dict's keys, not iterate its
-    values -- see ``unscored_assets``."""
+    The row's ``raw_value`` is its total under the weights it was scored with. When the cycle's
+    weights differ from the weights stored with that row, the total is recomputed from the pillar
+    ratings the row stored -- no LLM call and no rewrite of the stored row. A row with no pillar
+    block (written before T-073, or one the code left unscored) keeps its own ``raw_value``.
+    """
+    stored = _json_object(row["inputs_json"])
+    if not stored or not weights_differ(stored, weights):
+        return float(row["raw_value"])
+    recomputed = total_from_block(stored, weights)
+    return float(row["raw_value"]) if recomputed is None else recomputed
+
+
+def _json_object(raw: str | None) -> dict[str, Any]:
+    """A stored JSON audit blob (``inputs_json`` / ``evidence_json``) as a dict; ``{}`` when it
+    carries none or it is not an object."""
+    try:
+        value = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def last_fundamental_dates(conn: Database, cycle_date: str) -> dict[int, str | None]:
+    """asset_id -> the period end of its newest **scored** FUNDAMENTAL filing usable on
+    *cycle_date*.
+
+    Only ever has an asset as a key when it *has* a usable FUNDAMENTAL score -- an asset whose
+    newest usable filing is unscored (T-073, D1: no ``raw_value``) and one with no filing at all
+    are both simply absent, never present with a ``None`` value (T-119): a consumer that wants "no
+    score at all" must diff its own universe against this dict's keys, not iterate its values --
+    see ``unscored_assets``."""
     return {int(r["asset_id"]): r["event_time"] for r in latest_fundamental_rows(conn, cycle_date)}
 
 
 def unscored_assets(asset_ids: list[int], scored: dict[int, Any]) -> list[int]:
-    """Universe members with no FUNDAMENTAL score row at all, not merely a stale one (T-119).
+    """Universe members with no FUNDAMENTAL **score** at all, not merely a stale one (T-119).
 
     *scored* is keyed by every asset that has one (``last_fundamental_dates`` or
-    ``latest_fundamental_rows``'s normalized-score map both qualify) -- this is a
-    key-membership diff against the full universe, not a value check, since an asset with zero
-    rows is never a key at all. Includes *every* asset when none is scored -- PR #78's decision
+    ``latest_fundamental_rows``'s normalized-score map both qualify) -- this is a key-membership
+    diff against the full universe, not a value check, since an asset with no score value is never
+    a key at all (T-073: a filing whose applicable pillar has no value is recorded but not scored,
+    so it is unscored here too). Includes *every* asset when none is scored -- PR #78's decision
     ("more than 5% unscored stops the cycle") applies at 100% too (PR #99 review): a cycle with
     no FUNDAMENTAL coverage at all must refuse, not silently build a portfolio on TECHNICAL/
     VALORIZATION alone."""
@@ -279,11 +461,21 @@ def unscored_assets(asset_ids: list[int], scored: dict[int, Any]) -> list[int]:
 
 
 class TooManyUnscored(RuntimeError):
-    """More than ``CycleSettings.unscored_max_share`` of the universe has no FUNDAMENTAL score
-    at all (T-119, PR #78 review) -- refuses to rank/select rather than silently building a
-    portfolio blind on most of the universe. An unscored asset is ineligible for selection, not
-    penalized like a stale one (``EARNINGS_MISSING``, SOFT): this is a data-completeness circuit
-    breaker on the whole run, not a per-asset veto."""
+    """More than ``CycleSettings.unscored_max_share`` of the universe is unrankable (T-119,
+    PR #78 review; the unpriced gap added by T-153 part 3c, D2) -- refuses to rank/select rather
+    than silently building a portfolio blind on most of the universe. An unrankable asset is
+    ineligible for selection, not penalized like a stale one (``EARNINGS_MISSING``, SOFT): this
+    is a data-completeness circuit breaker on the whole run, not a per-asset veto. The name is
+    kept (it is read by the CLI and the tests; no view or API carries it) and the message names
+    both gaps separately."""
+
+
+class TooFewCandidates(RuntimeError):
+    """Fewer than ``top_n`` ranked names are selectable, so the run refuses to build a short
+    book (WP-C): the backtest's Top-N arm must hold exactly ``top_n`` names, and a shortfall there
+    is a data problem to report, never a smaller book to trade. Raised only when a selection is
+    restricted (``risk_model_id``); an unrestricted cycle still holds what is eligible and records
+    the ``shortfall`` (T-134/T-136)."""
 
 
 def too_many_unscored_reason(
@@ -302,6 +494,50 @@ def too_many_unscored_reason(
     return (
         f"{len(unscored)}/{universe_size} universe members ({share:.1%}) have no FUNDAMENTAL "
         f"score at all, over the {max_share:.0%} limit: asset_ids {sorted(unscored)}"
+    )
+
+
+def unpriced_assets(
+    conn: Database, asset_ids: list[int], cycle_date: str, engine_version: str
+) -> list[int]:
+    """Universe members with no usable close on the cycle date's latest session (T-153 part 3c).
+
+    Eligibility is C11 printed p.36 applied by analogy (index addition -> selection): a member is
+    usable on cycle date D only if its line has a close on the market's **latest NYSE session on
+    or before D** (``kg_schema.trading_calendar.last_session_on_or_before``), in the cycle's own
+    ``price_observation`` engine version and with a non-NULL close. A holiday therefore does not
+    exclude a name (its session is the earlier one), but a one-day hole does. The price vetoes
+    keep their own 7-day window (``MAX_OBSERVATION_AGE_DAYS``): a deliberately different rule,
+    declared in ``docs/model_fixes.md``."""
+    session = last_session_on_or_before(date.fromisoformat(cycle_date)).isoformat()
+    rows = conn.execute(
+        "SELECT asset_id FROM price_observation WHERE engine_version = ? AND obs_date = ? "
+        "AND close IS NOT NULL",
+        (engine_version, session),
+    ).fetchall()
+    priced = {int(r["asset_id"]) for r in rows}
+    return [a for a in asset_ids if a not in priced]
+
+
+def too_many_unrankable_reason(
+    unscored: list[int], unpriced: list[int], universe_size: int, max_share: float
+) -> str | None:
+    """``None`` when the union of the unscored and the unpriced members is within *max_share*;
+    otherwise the refusal message ``TooManyUnscored`` should carry (T-153 part 3c, D2).
+
+    One coverage rule, both gaps counted once per asset (an asset that is both counts once), the
+    two lists named separately so an operator sees which gap to fix."""
+    both = set(unscored) | set(unpriced)
+    if universe_size == 0 or not both:
+        return None
+    share = len(both) / universe_size
+    if share <= max_share:
+        return None
+    return (
+        f"{len(both)}/{universe_size} universe members ({share:.1%}) are unrankable, over the "
+        f"{max_share:.0%} limit: {len(unscored)} unscored (no FUNDAMENTAL score at all) "
+        f"asset_ids {sorted(unscored)}; {len(unpriced)} unpriced (no close on the session) "
+        f"asset_ids {sorted(unpriced)}"
     )
 
 

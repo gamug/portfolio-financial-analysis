@@ -8,6 +8,7 @@ Reads of other packages' tables are plain ``SELECT``s -- no ``cycle`` import.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -18,12 +19,20 @@ import numpy.typing as npt
 from portfolio_common.db import Database, DatabaseError, Row, in_clause
 
 import kg_schema
+from kg_schema import corporate_actions
 from kg_schema.env import universe_database_path
 
 # T-125: hard_vetoed_as_of moved to kg_schema.queries (the one shared point-in-time veto
 # predicate `cycle` and `quant` both read) -- re-exported here (see __all__ below) since
 # quant.universe imports it from this module.
-from kg_schema.queries import connect_ro, hard_vetoed_as_of, resolve_asset_ids, symbols_asof
+from kg_schema.queries import (
+    WINDOW_START,
+    connect_ro,
+    hard_vetoed_as_of,
+    members_asof,
+    members_over_range,
+    resolve_asset_ids,
+)
 
 # hard_vetoed_as_of is otherwise unused in this module -- it is imported only to be
 # re-exported, since quant.universe imports it from quant.db (T-125).
@@ -37,7 +46,7 @@ _WEIGHT_CHANGE = 1e-12  # a weight delta smaller than this is a no-op
 # creates them before it (re)builds the views.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS quant_run (
-    id             INTEGER PRIMARY KEY,
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
     command        TEXT NOT NULL,
     as_of          TEXT,
     started_at     TEXT NOT NULL,
@@ -94,6 +103,11 @@ class ActionsReport:
     inserted: int = 0
     errors: list[str] = field(default_factory=list)
     dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
+    #: Lines the historical selection set aside (T-143 part A item 9): ``(ticker, reason)`` from
+    #: :func:`load_action_targets`' ``unmatched``, and the lines whose last stored bar precedes
+    #: ``--from`` (nothing to fetch). Recorded on the run and printed, never dropped in silence.
+    unmatched: list[tuple[str, str]] = field(default_factory=list)
+    empty_span: list[str] = field(default_factory=list)
 
 
 def upsert_corporate_actions(
@@ -154,16 +168,53 @@ def load_universe_asset_ids(
     upath = universe_database_path(str(universe_db_path) if universe_db_path else None)
     uconn = connect_ro(upath)
     try:
-        syms = symbols_asof(uconn, as_of, universe=universe)
+        members = members_asof(uconn, as_of, universe=universe)
     finally:
         uconn.close()
-    if not syms:
+    if not members:
         raise RuntimeError(f"universe.db ({upath}) has no {universe} members as of {as_of}")
-    mapping, _missing = resolve_asset_ids(conn, syms)
+    mapping, _missing = resolve_asset_ids(conn, [(m.symbol, m.cik) for m in members], as_of=as_of)
     if not mapping:
         raise RuntimeError(
-            f"none of the {len(syms)} {universe} members as of {as_of} exist in assets yet "
+            f"none of the {len(members)} {universe} members as of {as_of} exist in assets yet "
             f"-- run fundamental_agent / pricing_agent for this date first"
+        )
+    return sorted(mapping.values())
+
+
+def load_universe_asset_ids_over_range(
+    conn: Database,
+    *,
+    universe: str,
+    date_from: str,
+    date_to: str,
+    universe_db_path: str | Path | None = None,
+) -> list[int]:
+    """``assets.id`` for every universe line whose PIT stint intersects ``[date_from, date_to]``.
+
+    :func:`load_universe_asset_ids` keeps only the members on one date. A return panel needs
+    every name that was a member on any session of the window -- including the names that
+    leave before its end -- or the risk model and the optimizer can never hold a leaver
+    (survivorship / look-ahead bias). The selection is :func:`kg_schema.queries.members_over_range`
+    (one entry per CIK line, so a rename keeps one asset); *universe_db_path* is the test seam.
+    """
+    upath = universe_database_path(str(universe_db_path) if universe_db_path else None)
+    uconn = connect_ro(upath)
+    try:
+        window = members_over_range(uconn, conn, date_from, date_to, universe=universe)
+    finally:
+        uconn.close()
+    if not window:
+        raise RuntimeError(
+            f"universe.db ({upath}) has no {universe} members in [{date_from}, {date_to}]"
+        )
+    mapping, _missing = resolve_asset_ids(
+        conn, [(w.member.symbol, w.member.cik) for w in window], as_of=date_to
+    )
+    if not mapping:
+        raise RuntimeError(
+            f"none of the {len(window)} {universe} lines in [{date_from}, {date_to}] exist in "
+            f"assets yet -- run fundamental_agent / pricing_agent for this date first"
         )
     return sorted(mapping.values())
 
@@ -188,6 +239,148 @@ def load_assets(
     ]
 
 
+def load_assets_over_range(
+    conn: Database,
+    *,
+    universe: str,
+    date_from: str,
+    date_to: str,
+    universe_db_path: str | Path | None = None,
+) -> list[tuple[int, str]]:
+    """``(asset_id, ticker)`` for every universe line whose stint intersects ``[date_from, date_to]``."""
+    ids = set(
+        load_universe_asset_ids_over_range(
+            conn,
+            universe=universe,
+            date_from=date_from,
+            date_to=date_to,
+            universe_db_path=universe_db_path,
+        )
+    )
+    return [
+        (int(r["id"]), str(r["ticker"]))
+        for r in conn.execute("SELECT id, ticker FROM assets ORDER BY ticker")
+        if int(r["id"]) in ids
+    ]
+
+
+@dataclass(frozen=True)
+class ActionTarget:
+    """One line's corporate-action fetch: its canonical ticker and the span its bars cover.
+
+    ``start`` is the run's ``--from``; ``end`` is the line's last stored ``price_daily`` bar (its
+    membership exit when it has none), never past the run's ``--to``. ``kg_schema.market_cap``'s
+    ``_factor`` applies a recorded split up to the last stored bar, so a split between a line's
+    index exit and its last bar still moves a cap and must be fetched (T-143 part A, item 9).
+    ``is_current`` marks a line still a member at ``--to``: the probe prefers one, since a leaver's
+    ticker may no longer be served."""
+
+    asset_id: int
+    ticker: str
+    start: str
+    end: str
+    is_current: bool = False
+
+
+#: Why a line is in ``ActionSelection.unmatched`` (T-143 part A item 9).
+NO_ASSETS_ROW = "no assets row"
+SHARED_SYMBOL = "shared symbol"
+SHARED_ASSET_ID = "shared asset id"
+
+
+@dataclass(frozen=True)
+class ActionSelection:
+    """The historical selection's lines, and what it set aside.
+
+    ``unmatched`` is ``(ticker, reason)`` for a line with no ``assets`` row, or whose canonical
+    symbol (``resolve_asset_ids`` keeps only the first line per symbol) or resolved asset id another
+    line already took; ``empty_span`` names the lines whose last stored bar precedes ``--from``.
+    Neither is fetched: unmatched lines are recorded on the run (``lines_unmatched``) and listed by
+    ``pending``; empty-span lines are counted on the run (``lines_empty_span``); never dropped in
+    silence (T-143 part A item 9)."""
+
+    targets: list[ActionTarget]
+    unmatched: list[tuple[str, str]]
+    empty_span: list[str]
+
+
+def load_action_targets(
+    conn: Database,
+    *,
+    universe: str,
+    date_from: str,
+    date_to: str,
+    universe_db_path: str | Path | None = None,
+) -> ActionSelection:
+    """``backfill-actions``'/``pending``'s lines: the historical universe, each with its span.
+
+    Every CIK line that was a member at any time in ``[WINDOW_START, date_to]``
+    (:func:`kg_schema.queries.members_over_range`, T-153 part 3a), as ``pricing_agent`` and
+    ``fundamental_agent`` select -- current members and leavers. Before T-143 part A this command
+    selected :func:`load_assets`' ``members_asof(date_to)`` only, so a leaver's SPLIT row was never
+    fetched or cited (its cap could be off by the ratio, neither explained nor refused). The fetch
+    ticker is the line's canonical symbol (a post-exit rename, FBHS -> FBIN, resolves to the one
+    asset the whole line shares) and the span is ``[date_from, the line's last stored bar]``, not
+    only the membership span. A line with no ``assets`` row, a symbol or asset id two lines share,
+    or a span that ends before *date_from*, is returned in ``ActionSelection`` instead of fetched.
+
+    Raises ``RuntimeError`` when ``universe.db`` has no members in the window, or when none of
+    them have an ``assets`` row yet (run ``pricing_agent`` / ``fundamental_agent`` first)."""
+    upath = universe_database_path(str(universe_db_path) if universe_db_path else None)
+    uconn = connect_ro(upath)
+    try:
+        window = members_over_range(uconn, conn, WINDOW_START, date_to, universe=universe)
+    finally:
+        uconn.close()
+    if not window:
+        raise RuntimeError(
+            f"universe.db ({upath}) has no {universe} members in [{WINDOW_START}, {date_to}]"
+        )
+    mapping, _missing = resolve_asset_ids(
+        conn, [(w.member.symbol, w.member.cik) for w in window], as_of=date_to
+    )
+    if not mapping:
+        raise RuntimeError(
+            f"none of the {len(window)} {universe} lines in [{WINDOW_START}, {date_to}] exist in "
+            f"assets yet -- run fundamental_agent / pricing_agent for this date first"
+        )
+    last_bar = {
+        int(r["asset_id"]): str(r["d"])
+        for r in conn.execute(
+            "SELECT asset_id, MAX(date) AS d FROM price_daily WHERE date <= ? GROUP BY asset_id",
+            (date_to,),
+        )
+    }
+    targets: list[ActionTarget] = []
+    unmatched: list[tuple[str, str]] = []
+    empty_span: list[str] = []
+    seen_symbols: set[str] = set()
+    seen_assets: set[int] = set()
+    for w in window:
+        symbol = w.member.symbol
+        key = symbol.upper()
+        asset_id = mapping.get(key)
+        if asset_id is None:
+            unmatched.append((symbol, NO_ASSETS_ROW))
+            continue
+        if key in seen_symbols:
+            unmatched.append((symbol, SHARED_SYMBOL))
+            continue
+        if asset_id in seen_assets:
+            unmatched.append((symbol, SHARED_ASSET_ID))
+            continue
+        seen_symbols.add(key)
+        seen_assets.add(asset_id)
+        end = min(last_bar.get(asset_id) or w.window_to or date_to, date_to)
+        if end < date_from:
+            empty_span.append(symbol)
+            continue
+        targets.append(ActionTarget(asset_id, symbol, date_from, end, w.window_to is None))
+    return ActionSelection(
+        targets=sorted(targets, key=lambda t: t.ticker), unmatched=unmatched, empty_span=empty_span
+    )
+
+
 def load_daily_closes(
     conn: Database, asset_id: int, *, start: str, end: str
 ) -> list[tuple[str, float]]:
@@ -203,20 +396,25 @@ def load_daily_closes(
     ]
 
 
-# The gateway is the only corporate-actions source (T-085), so only its engines are
-# read; if a newer gateway engine ever coexists with an older one for the same asset +
-# action_type, the newer wins outright. Rows written before T-085 under the
-# XBRL-derived engines ('corpact-v0-approx', 'corpact-v1-derived') stay in the
-# append-only table as history but are deliberately NOT in this tuple -- they are
-# never read. Deliberately NOT ``v_corporate_action``'s per-(asset, action_type,
-# ex_date) "most recently ingested" resolution either: two engines' ex-dates rarely
-# collide, so that view would return BOTH engines' rows side by side.
-_ACTION_ENGINE_PRIORITY = ("corpact-v2", "corpact-v1")
+# The corporate-actions sources quant reads, newest first. The gateway's engines come first
+# (T-085: the gateway is the only source for the gateway-served lines); the private Tiingo
+# import's build (T-153 part 3d, D6) is read last, so a line the gateway serves again switches
+# to it as a whole rather than mixing two vendors' action rows. If a newer engine of one source
+# coexists with an older one for the same asset + action_type, the newer wins outright. Rows
+# written before T-085 under the XBRL-derived engines ('corpact-v0-approx',
+# 'corpact-v1-derived') stay in the append-only table as history but are deliberately NOT in
+# this tuple -- they are never read. Deliberately NOT ``v_corporate_action``'s
+# per-(asset, action_type, ex_date) "most recently ingested" resolution either: two engines'
+# ex-dates rarely collide, so that view would return BOTH engines' rows side by side.
+_ACTION_ENGINE_PRIORITY = corporate_actions.READABLE_ENGINES
 
 
 def has_gateway_actions(conn: Database, engines: Sequence[str] | None = None) -> bool:
-    """True when ``corporate_action`` holds at least one row from a gateway engine
-    (*engines*, default ``_ACTION_ENGINE_PRIORITY``)."""
+    """True when ``corporate_action`` holds at least one row from a source quant reads
+    (*engines*, default ``_ACTION_ENGINE_PRIORITY``: the gateway's engines, then the private
+    import's Tiingo build). T-153 part 3d: the import's engine counts, so a database holding
+    only imported actions is not mistaken for one with none -- the guard's real question is
+    whether ``build-returns`` has anything to fold in."""
     engines = tuple(engines or _ACTION_ENGINE_PRIORITY)
     marks = ", ".join("?" for _ in engines)
     row = conn.execute(
@@ -285,13 +483,15 @@ class ReturnRow:
 _UPSERT_RETURN_SQL = """
 INSERT INTO quant_return_daily
     (asset_id, obs_date, close_split_adj, adj_close, tr_index, cash_dividend,
-     split_factor, price_log_return, tr_log_return, source, engine_version, computed_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'quant-tr-v1', ?, ?)
+     split_factor, price_log_return, tr_log_return, source, engine_version, computed_at,
+     vendor)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'quant-tr-v1', ?, ?, ?)
 ON CONFLICT (asset_id, obs_date, engine_version) DO UPDATE SET
     close_split_adj = excluded.close_split_adj, adj_close = excluded.adj_close,
     tr_index = excluded.tr_index, cash_dividend = excluded.cash_dividend,
     split_factor = excluded.split_factor, price_log_return = excluded.price_log_return,
-    tr_log_return = excluded.tr_log_return, computed_at = excluded.computed_at
+    tr_log_return = excluded.tr_log_return, computed_at = excluded.computed_at,
+    vendor = excluded.vendor
 WHERE quant_return_daily.close_split_adj IS NOT excluded.close_split_adj
    OR quant_return_daily.adj_close IS NOT excluded.adj_close
    OR quant_return_daily.tr_index IS NOT excluded.tr_index
@@ -299,11 +499,33 @@ WHERE quant_return_daily.close_split_adj IS NOT excluded.close_split_adj
    OR quant_return_daily.split_factor IS NOT excluded.split_factor
    OR quant_return_daily.price_log_return IS NOT excluded.price_log_return
    OR quant_return_daily.tr_log_return IS NOT excluded.tr_log_return
+   OR quant_return_daily.vendor IS NOT excluded.vendor
 """
 
 
+def line_vendor(conn: Database, asset_id: int) -> str | None:
+    """The vendor of the line's stored bars, when it is not the gateway (T-153 part 3d, D4).
+
+    Rule 2 makes this per *line*, not per day: a line's bars are either all the private import's
+    (``'tiingo'``) or none of them are, so one literal marks every one of its return rows."""
+    try:
+        row = conn.execute(
+            "SELECT DISTINCT source FROM price_daily WHERE asset_id = ? AND source IS NOT NULL",
+            (asset_id,),
+        ).fetchall()
+    except DatabaseError:
+        return None
+    sources = {str(r["source"]) for r in row}
+    return corporate_actions.TIINGO_SOURCE if sources == {corporate_actions.TIINGO_SOURCE} else None
+
+
 def upsert_return_daily(
-    conn: Database, asset_id: int, rows: Iterable[ReturnRow], *, engine_version: str
+    conn: Database,
+    asset_id: int,
+    rows: Iterable[ReturnRow],
+    *,
+    engine_version: str,
+    vendor: str | None = None,
 ) -> int:
     """Insert each day, or rewrite it when its values changed (T-131); a no-op when identical.
 
@@ -311,7 +533,8 @@ def upsert_return_daily(
     corrected bar or a re-adjusted history (a split the gateway applied after the first build)
     has to reach it. ``INSERT OR IGNORE`` froze the first build for good: the 2026-09-29 partial
     session stayed in the benchmark and risk model, and a split-shaped jump could only be undone
-    by bumping the engine version. Returns the rows inserted or changed."""
+    by bumping the engine version. *vendor* marks the row when its close came from the private
+    import rather than the gateway (T-153 part 3d, D4). Returns the rows inserted or changed."""
     now = _now()
     changed = 0
     for r in rows:
@@ -329,6 +552,7 @@ def upsert_return_daily(
                 r.tr_log_return,
                 engine_version,
                 now,
+                vendor,
             ),
         )
         changed += cur.rowcount
@@ -395,7 +619,6 @@ def insert_risk_model(conn: Database, meta: RiskModelMeta) -> int:
             meta.manifest_json,
         ),
     )
-    conn.commit()
     row = conn.execute(
         "SELECT id FROM quant_risk_model WHERE as_of = ? AND model_version = ?",
         (meta.as_of, meta.model_version),
@@ -416,7 +639,6 @@ def insert_expected_returns(
                 (model_id, asset_id, mu_model, mu),
             )
             n += 1
-    conn.commit()
     return n
 
 
@@ -437,7 +659,6 @@ def insert_covariance(
                 (model_id, ai, asset_ids[j], float(sigma[i, j])),
             )
             n += 1
-    conn.commit()
     return n
 
 
@@ -461,6 +682,45 @@ def load_risk_model(conn: Database, *, as_of: str, model_version: str) -> Row | 
         (as_of, model_version),
     ).fetchone()
     return row
+
+
+def load_risk_model_by_id(conn: Database, model_id: int) -> Row | None:
+    """The stored risk model *model_id* (``optimize --risk-model-id``), whatever its label."""
+    row: Row | None = conn.execute(
+        "SELECT * FROM quant_risk_model WHERE id = ?", (model_id,)
+    ).fetchone()
+    return row
+
+
+def load_panel_asset_ids(model: Row) -> list[int]:
+    """The asset set a risk model was built over, from its stored ``panel_spec_json``.
+
+    The panel definition (not ``quant_covariance``) is authoritative: a model built with
+    ``--no-store-cov`` still names its universe, and the covariance is checked separately."""
+    spec = json.loads(str(model["panel_spec_json"]))
+    return [int(a) for a in spec["asset_ids"]]
+
+
+def load_cycle_run(conn: Database, cycle_run_id: int) -> Row | None:
+    row: Row | None = conn.execute(
+        "SELECT id, cycle_type, cycle_date, status FROM cycle_run WHERE id = ?",
+        (cycle_run_id,),
+    ).fetchone()
+    return row
+
+
+def load_cycle_selected_ids(conn: Database, cycle_run_id: int) -> list[int]:
+    """The ``cycle_ranking.selected = 1`` asset ids of a cycle run, in rank order.
+
+    Plain SQL on the cycle tables: ``quant`` is a leaf and never imports ``cycle``."""
+    return [
+        int(r["asset_id"])
+        for r in conn.execute(
+            "SELECT asset_id FROM cycle_ranking WHERE cycle_run_id = ? AND selected = 1 "
+            "ORDER BY rank, asset_id",
+            (cycle_run_id,),
+        )
+    ]
 
 
 def load_expected_returns(conn: Database, model_id: int, mu_model: str) -> dict[int, float]:
@@ -567,7 +827,6 @@ def insert_portfolio(conn: Database, row: PortfolioRow) -> int:
                 (*values, row.as_of, row.kind, row.frontier_k, row.engine_version),
             ).fetchone()["id"]
         )
-    conn.commit()
     return pid
 
 
@@ -604,7 +863,6 @@ def sync_positions(
                 (portfolio_id, aid, w, as_of),
             )
             opened += 1
-    conn.commit()
     return opened, closed
 
 
@@ -791,7 +1049,6 @@ def insert_frontier_points(
             (model_id, k, tgt, ret, vol, sharpe, status, wjson),
         )
         n += 1
-    conn.commit()
     return n
 
 
