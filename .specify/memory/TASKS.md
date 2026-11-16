@@ -848,6 +848,19 @@ that constitution AI behavior #10 asks to be approved first.
       - `scripts/verify_pilot.py` checks that every `run_id` resolves to a run of the right type, and that
         `sec_filings.accession_number` is never NULL and is unique.
       - No production write: the orphaned edge run ids disappear with `T-100`'s fresh database.
+- [ ] **T-159** Test the dev-container image built from `.devcontainer/Dockerfile` (added with the Dockerfile PR; the
+      PR only checked that `docker build` succeeds and that `uv`/Python 3.12 are on the path). Local work, no
+      production write.
+      - Build it through the Dev Containers CLI (`devcontainer up --workspace-folder .`) with `THESIS_HOST_DIR` set,
+        not only `docker build`; check `/workspaces/thesis` is mounted and `UV_LINK_MODE=copy` is set.
+      - `postCreateCommand` (`scripts/init.sh`) finishes: `uv sync --frozen --group dev`, `pre-commit install`,
+        `gh` and Claude Code installed. Record whether `sudo` exists for the `vscode` user (init.sh uses it).
+      - Inside the container, the quality gates CI runs pass: `uv run pytest -q`, `ruff check`, `ruff format --check`,
+        `mypy --config-file .code_quality/mypy.ini src tests`.
+      - `uv` tab completion works in a new bash shell; the VS Code extensions and settings in `devcontainer.json` apply.
+      - Decide whether `UV_VERSION` (the Dockerfile's pin) needs a CI check or a bump rule; record the result in
+        `docs/`.
+      **Acceptance:** each check above has its output (or "not run, why") in the PR description.
 
 ## Work item 20 — Run-endpoint access control — DEFERRED until after `T-100`
 
