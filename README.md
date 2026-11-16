@@ -227,7 +227,7 @@ uv run pre-commit install --install-hooks
 
 Opening the repo in the provided **Dev Container** (`.devcontainer/`) runs both
 steps automatically and pins the exact toolchain (Python 3.12 + uv, built from
-`.devcontainer/Dockerfile`). It also bind-mounts a
+the root `Dockerfile`). It also bind-mounts a
 shared `thesis` data directory (siblings' `data/`, `urls.db`, `universe.db`) at
 `/workspaces/thesis`; set **`THESIS_HOST_DIR`** in your host environment (shell profile or OS
 environment variables, read before VS Code launches) to that directory's path on your machine

@@ -1,7 +1,8 @@
 {
   "name": "portfolio-financial-analysis",
   "build": {
-    "dockerfile": "Dockerfile"
+    "dockerfile": "../Dockerfile",
+    "context": ".."
   },
   "mounts": [
     "source=${localEnv:THESIS_HOST_DIR},target=/workspaces/thesis,type=bind,consistency=cached"

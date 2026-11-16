@@ -848,7 +848,7 @@ that constitution AI behavior #10 asks to be approved first.
       - `scripts/verify_pilot.py` checks that every `run_id` resolves to a run of the right type, and that
         `sec_filings.accession_number` is never NULL and is unique.
       - No production write: the orphaned edge run ids disappear with `T-100`'s fresh database.
-- [ ] **T-159** Test the dev-container image built from `.devcontainer/Dockerfile` (added with the Dockerfile PR; the
+- [ ] **T-159** Test the dev-container image built from the root `Dockerfile` (added with the Dockerfile PR; the
       PR only checked that `docker build` succeeds and that `uv`/Python 3.12 are on the path). Local work, no
       production write.
       - Build it through the Dev Containers CLI (`devcontainer up --workspace-folder .`) with `THESIS_HOST_DIR` set,

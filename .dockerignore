@@ -1,0 +1,13 @@
+.git
+.venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+.env
+.claude
+CLAUDE.md
+*.db
+*.db-wal
+*.db-shm
