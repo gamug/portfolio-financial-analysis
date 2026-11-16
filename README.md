@@ -234,13 +234,25 @@ uv run pre-commit install --install-hooks
 ```
 
 Opening the repo in the provided **Dev Container** (`.devcontainer/`) runs both
-steps automatically and pins the exact toolchain (Python 3.12 + uv). It also bind-mounts a
+steps automatically and fixes the toolchain (Python 3.12, uv pinned to the version in the root `Dockerfile`'s
+`UV_VERSION`; the Python base image tag floats within 3.12). It also bind-mounts a
 shared `thesis` data directory (siblings' `data/`, `urls.db`, `universe.db`) at
 `/workspaces/thesis`; set **`THESIS_HOST_DIR`** in your host environment (shell profile or OS
 environment variables, read before VS Code launches) to that directory's path on your machine
 before opening the container — e.g. `export THESIS_HOST_DIR=/Users/you/thesis` or, on Windows,
 `setx THESIS_HOST_DIR D:\thesis`. This variable name is shared across this repo's sibling
 `portfolio-*` repos that mount the same directory.
+
+The image can also be built and run without VS Code, from the repo root (the build context; `.dockerignore`
+keeps it small):
+
+```bash
+docker build -t portfolio-financial-analysis-dev .                  # add --build-arg UV_VERSION=x.y.z to try another uv
+docker run --rm -it -v "$THESIS_HOST_DIR:/workspaces/thesis" portfolio-financial-analysis-dev bash
+```
+
+`devcontainer.json` passes no build arguments, so the Dev Container always uses the `UV_VERSION` default in
+the `Dockerfile`; change that default to bump uv for the container.
 
 ### Common tasks
 

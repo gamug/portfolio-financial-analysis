@@ -923,6 +923,32 @@ of `T-100`. `T-083` (local: our API reading `v_quant_vs_live`) moved to Work ite
       knowledge-graph repo already referenced `T-144`/`T-145` as the view tasks — a one-time exception to the
       stable-ID rule.)*
 
+## Work item 23 — Dev-container image test (outside the priority chain)
+
+**Placement (user, 2026-11-16): outside the priority chain**; gates neither `T-143` nor `T-100`. → `PLAN.md` Work item 23.
+
+- [ ] **T-164** Test the dev-container image built from the root `Dockerfile` (first numbered `T-159` in PR #199;
+      renumbered before any work started, master having taken `T-159`). Local work, no production write. Each
+      check below is recorded in the PR description as command, output and pass/fail (or "not run, why"):
+      - `devcontainer up --workspace-folder .` from the Windows host with `THESIS_HOST_DIR` set: exit 0;
+        `/workspaces/thesis` is mounted (`ls` lists the shared files); `echo $UV_LINK_MODE` prints `copy`;
+        `scripts/init.sh` has LF endings (`file` reports no CRLF).
+      - `postCreateCommand` (`scripts/init.sh`) exits 0: `uv sync --frozen --group dev`, `pre-commit install`,
+        `gh --version` and `claude --version` succeed.
+      - The host's `.venv` is a Linux one created by the container, so host-side `git commit` finds no
+        `pre-commit` (the hook's `INSTALL_PYTHON` is `/workspaces/…/.venv/bin/python`). Reproduce it, then
+        record a host-side workaround or fix it.
+      - Inside the container the CI gates exit 0: `uv run pytest -q`, `uv run ruff check --config
+        .code_quality/ruff.toml .`, `ruff format --check`, `uv run mypy --config-file .code_quality/mypy.ini src tests`.
+      - `uv` tab completion works in a new bash shell (`uv sy<TAB>` completes); the extensions and settings of
+        `devcontainer.json` are applied (`ruff` is the Python formatter).
+      - Decisions, each written to `docs/devcontainer.md` (new; linked from the README and `docs/README.md`):
+        (a) how `UV_VERSION` is bumped; (b) whether CI builds the image (`docker build .`), so the
+        Dockerfile cannot rot silently; (c) whether `gh` moves from `init.sh` (`sudo apt` on every create) into
+        the Dockerfile.
+      **Acceptance:** every check above has its output in the PR description, and `docs/devcontainer.md`
+      holds decisions (a)-(c).
+
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
 Added 2026-09-25, at the user's direction. Every other task in this file is either
@@ -1170,6 +1196,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 **🔴 Current priority order (user's, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first
 2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`)) → `T-153` (historical universe) → Work item 19 (`T-083` → `T-142` →
 `T-145`) → Work item 2 (orchestrator) → `T-143` part A (the final pilot) → **`T-160` (done 2026-10-24), `T-161` (done 2026-10-24) and `T-162`** (part A follow-ups) → `T-143` part B → `T-100` (the full-universe run, last of all).
+Work item 23 (`T-164`, the dev-container image test) is outside this chain (user, 2026-11-16).
 Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20 (`T-146`) are deferred until after
 `T-100`; Work item 3
 stays superseded by `T-077` (do not implement). `T-079` and `T-075` are superseded by `T-100`. One task per

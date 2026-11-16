@@ -2318,6 +2318,23 @@ sees the writer's just-committed row.
   `portfolio-common` version has not been checked from this session and both
   artifacts say so rather than asserting it.
 
+## Work item 23 — Dev-container image test (added 2026-11-16; outside the priority chain)
+
+**Placement (user, 2026-11-16): outside the priority chain.** It gates neither `T-143` nor `T-100` and can run at
+any point. Its task is `T-164` (first numbered `T-159` in PR #199; renumbered before any work started, because
+master took `T-159` for a pilot follow-up in the meantime).
+
+**Why**: the dev container used to pull an image and the uv devcontainer feature. PR #199 replaced them with a
+root `Dockerfile` (base `devcontainers/python:1-3.12-bookworm`, uv copied from the official image at a pinned
+`UV_VERSION`) that was only checked with `docker build` and the Dev Containers CLI's `build`. Nothing yet proves
+the container the maintainer actually opens (`up`, `scripts/init.sh`, the CI gates inside it) works, and the
+Linux-created `.venv` already broke the host's pre-commit hook once. The step proves it from the Windows host,
+then decides how `UV_VERSION` is bumped, whether CI builds the image and whether `gh` moves from `init.sh` into
+the Dockerfile, and records those decisions in `docs/devcontainer.md`.
+
+**Acceptance criteria**: each check in `T-164`'s `TASKS.md` entry has the command, its output and a pass/fail,
+or "not run, why", in the PR description; the three decisions are in `docs/devcontainer.md`.
+
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
 **Why**: every other work item either changes code or validates it on a **small
