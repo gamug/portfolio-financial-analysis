@@ -2143,6 +2143,14 @@ approval.
    `schema_version` 8 until `T-100` (`m009`, the veto stints, was never applied to it); the knowledge-graph repo
    keeps its floor at or below the database's own version for it.
 
+6. **`T-159`**, the dev-container image test. The root `Dockerfile` (base `devcontainers/python:1-3.12-bookworm`,
+   uv copied from the official image at a pinned `UV_VERSION`) replaced the uv devcontainer feature and its lock
+   file; this step proves the image works end to end through the Dev Containers CLI, from the Windows host: mount
+   and `UV_LINK_MODE`, `scripts/init.sh`, the CI quality gates inside the container, uv completion, and the host's
+   Linux-created `.venv` that breaks the host-side pre-commit hook. It also decides how `UV_VERSION` is bumped
+   and whether CI builds the image. Placement is proposed, not confirmed: outside the priority chain, gating
+   neither `T-143` nor `T-100`.
+
 **Acceptance criteria**:
 
 - `T-083`: the reconciliation query in Work item 9's acceptance returns 0 rows, and `api` renders a live-only
@@ -2173,6 +2181,7 @@ approval.
   before the migration; `verify_pilot.py` fails on a
   dangling or wrong-type `run_id`, a NULL accession and a duplicate accession, and passes on a database built by
   the current code.
+- `T-159`: each check in its `TASKS.md` entry has its output, or "not run, why", in the PR description.
 - `T-083` and `T-142` change no `v_*` view (constitution AI behavior #10); `T-144` is the one approved view
   change. `uv run pytest -q`, `ruff` and `mypy` are green for each.
 

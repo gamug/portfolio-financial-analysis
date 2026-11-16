@@ -1,5 +1,5 @@
-# scripts/init.sh
 #!/bin/bash
+# scripts/init.sh
 uv sync --frozen --group dev
 uv run pre-commit install --install-hooks
 source .venv/bin/activate
